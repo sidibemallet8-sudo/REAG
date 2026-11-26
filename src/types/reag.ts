@@ -277,6 +277,22 @@ export interface InputVector {
   right: boolean;
 }
 
+export interface ProjectHistoryEntry {
+  id: string;
+  timestamp: string;
+  action: string;
+  actor: 'utilisateur' | 'reag_core' | 'ia_proposition' | 'systeme';
+  details: string;
+}
+
+export type AiProviderId = 'none' | 'ollama' | 'gemini';
+
+export interface ProjectConfig {
+  dimension: '2d' | '3d';
+  preferredAiProvider: AiProviderId;
+  preferredOllamaModel?: string;
+}
+
 export interface ReagProject {
   id: string;
   name: string;
@@ -284,11 +300,14 @@ export interface ReagProject {
   description: string;
   createdAt: string;
   updatedAt: string;
+  config?: ProjectConfig;
   sources: DocumentarySource[];
   observations: GameObservation[];
   analysis: AnalysisReport | null;
   specification: ReagGameSpec | null;
   generatedArtifact: GeneratedGameArtifact | null;
+  history?: ProjectHistoryEntry[];
+  validationResults?: SpecValidationResult | null;
 }
 
 export interface ReagSettings {

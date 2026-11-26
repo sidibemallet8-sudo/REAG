@@ -4,12 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "REAG_HOST=0.0.0.0 PORT=3000 tsx server.ts",
+    "start": "node server.ts",
+    "launcher": "node launcher/reag-launcher.ts",
     "build": "vite build",
+    "package:portable": "node scripts/package-windows.mjs",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist dist-portable server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx src/tests/runTests.ts"
+    "test": "tsx src/tests/runTests.ts && tsx src/tests/runIntegrationTests.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

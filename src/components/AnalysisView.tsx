@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Cpu, FileUp, Plus, Trash2 } from 'lucide-react';
+import { ReagCore } from '../core/reagCore';
 import { ObservationEngine } from '../modules/observationEngine';
 import {
   GameObservation,
@@ -125,6 +126,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
   };
 
   const analysis = project.analysis;
+  const coreEval = useMemo(() => ReagCore.evaluateProject(project), [project]);
 
   return (
     <div className="space-y-6">
@@ -559,10 +561,76 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
                 </div>
               )}
 
+              {/* Noyau épistémique REAG Core */}
+              <div className="border border-slate-200 rounded-lg p-4 space-y-4">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h4 className="text-sm font-semibold text-slate-900">
+                    REAG Core — Évaluation épistémique (indépendant de l’IA)
+                  </h4>
+                  <span className="text-xs font-medium text-slate-600 tabular-nums">
+                    Couverture EvidenceEngine : {coreEval.evidenceCoverageRatio}%
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 text-center bg-slate-50 border border-slate-200 rounded-lg p-3">
+                  <div>
+                    <p className="text-[11px] text-slate-500">Faits vérifiés</p>
+                    <p className="text-base font-semibold text-emerald-700 tabular-nums">
+                      {coreEval.countsByKind.fait_verifie}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-slate-500">Observations</p>
+                    <p className="text-base font-semibold text-slate-900 tabular-nums">
+                      {coreEval.countsByKind.observation}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-slate-500">Hypothèses</p>
+                    <p className="text-base font-semibold text-amber-700 tabular-nums">
+                      {coreEval.countsByKind.hypothese}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-slate-500">Déductions</p>
+                    <p className="text-base font-semibold text-blue-700 tabular-nums">
+                      {coreEval.countsByKind.deduction}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-slate-500">Inconnus</p>
+                    <p className="text-base font-semibold text-slate-700 tabular-nums">
+                      {coreEval.countsByKind.inconnu}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-slate-500">Contradictions</p>
+                    <p className="text-base font-semibold text-rose-700 tabular-nums">
+                      {coreEval.countsByKind.contradiction}
+                    </p>
+                  </div>
+                </div>
+
+                {coreEval.decisions.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold text-slate-800">
+                      Décisions tracées (DecisionEngine)
+                    </p>
+                    <ul className="space-y-1 text-xs text-slate-600">
+                      {coreEval.decisions.map((d) => (
+                        <li key={d.id}>
+                          • <strong className="text-slate-900">{d.decision}</strong> — {d.justification}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
               {/* Limites assumées */}
               <div>
                 <h4 className="text-sm font-semibold text-slate-900 mb-2">
-                  Limites structurelles du moteur V1/V2
+                  Limites structurelles du moteur V2
                 </h4>
                 <ul className="space-y-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-4">
                   {analysis.v1Limitations.map((lim, i) => (

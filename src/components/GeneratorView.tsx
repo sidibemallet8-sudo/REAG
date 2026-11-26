@@ -1,13 +1,18 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertCircle,
+  Box,
   CheckCircle2,
   Download,
   Hammer,
+  History,
+  Layers,
   Play,
   RefreshCw,
 } from 'lucide-react';
+import { ThreeAdapter } from '../engines/threeAdapter';
 import { SpecificationEngine } from '../modules/specificationEngine';
+import { buildCommonGameSpecification } from '../types/commonGameSpec';
 import { ReagGameSpec, ReagProject } from '../types/reag';
 import { downloadTextFile, slugifyFilename } from '../utils/download';
 
@@ -19,6 +24,8 @@ interface GeneratorViewProps {
   onOpenPreview: () => void;
 }
 
+type EditorTab = 'spec2d' | 'common' | 'three' | 'history';
+
 export const GeneratorView: React.FC<GeneratorViewProps> = ({
   project,
   onCompileSpec,
@@ -26,6 +33,7 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
   onGenerateGame,
   onOpenPreview,
 }) => {
+  const [editorTab, setEditorTab] = useState<EditorTab>('spec2d');
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const spec = project.specification;
 
@@ -33,6 +41,21 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
     if (!spec) return null;
     return SpecificationEngine.validateSpecification(spec);
   }, [spec]);
+
+  const commonSpec = useMemo(() => {
+    if (!spec || !validation) return null;
+    return buildCommonGameSpecification(
+      spec,
+      project.analysis,
+      validation,
+      project.config?.dimension || '2d'
+    );
+  }, [spec, validation, project.analysis, project.config?.dimension]);
+
+  const threePlan = useMemo(() => {
+    if (!commonSpec) return null;
+    return ThreeAdapter.prepareScenePlan(commonSpec);
+  }, [commonSpec]);
 
   const handleFieldChange = (updater: (draft: ReagGameSpec) => ReagGameSpec) => {
     if (!spec) return;
@@ -69,7 +92,194 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
         </div>
       )}
 
-      {!project.analysis || !project.analysis.canReconstruct ? (
+      {/* Onglets segmentés de l'éditeur de projet */}
+      <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-lg w-fit flex-wrap">
+        <button
+          type="button"
+          onClick={() => setEditorTab('spec2d')}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+            editorTab === 'spec2d'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Hammer className="w-3.5 h-3.5" />
+          Spécification 2D &amp; Générateur
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditorTab('common')}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+            editorTab === 'common'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          Spécification commune 2D/3D
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditorTab('three')}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+            editorTab === 'three'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Box className="w-3.5 h-3.5" />
+          Adaptateur Three.js
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditorTab('history')}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+            editorTab === 'history'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <History className="w-3.5 h-3.5" />
+          Historique &amp; Validations
+        </button>
+      </div>
+
+      {editorTab === 'history' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <section className="lg:col-span-5 bg-white border border-slate-200 rounded-lg p-6 space-y-4">
+            <h3 className="text-base font-semibold text-slate-900">
+              Derniers résultats de validation
+            </h3>
+            {validation ? (
+              <div className="space-y-3 text-xs">
+                <p className={validation.valid ? 'text-emerald-700 font-semibold' : 'text-rose-700 font-semibold'}>
+                  {validation.valid
+                    ? 'Spécification valide pour la génération.'
+                    : `Spécification invalide (${validation.errors.length} erreur(s)).`}
+                </p>
+                {validation.errors.length > 0 && (
+                  <ul className="space-y-1 bg-rose-50 border border-rose-200 rounded-lg p-3 text-rose-800">
+                    {validation.errors.map((e, idx) => (
+                      <li key={idx}>• {e}</li>
+                    ))}
+                  </ul>
+                )}
+                {validation.warnings.length > 0 && (
+                  <ul className="space-y-1 bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-800">
+                    {validation.warnings.map((w, idx) => (
+                      <li key={idx}>• {w}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Aucune spécification compilée pour ce projet.
+              </p>
+            )}
+          </section>
+
+          <section className="lg:col-span-7 bg-white border border-slate-200 rounded-lg">
+            <div className="px-6 py-4 border-b border-slate-200">
+              <h3 className="text-base font-semibold text-slate-900">
+                Historique MemoryEngine ({project.history?.length || 0})
+              </h3>
+            </div>
+            {!project.history || project.history.length === 0 ? (
+              <p className="p-6 text-xs text-slate-500">
+                Aucune entrée enregistrée dans la session actuelle.
+              </p>
+            ) : (
+              <div className="divide-y divide-slate-200 max-h-[420px] overflow-y-auto">
+                {project.history.map((entry) => (
+                  <div key={entry.id} className="px-6 py-3 text-xs space-y-1">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="font-semibold text-slate-900">{entry.action}</span>
+                      <span className="font-mono text-slate-500 tabular-nums">
+                        {entry.actor} · {new Date(entry.timestamp).toLocaleString('fr-FR')}
+                      </span>
+                    </div>
+                    <p className="text-slate-600">{entry.details}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      ) : editorTab === 'common' ? (
+        !commonSpec ? (
+          <div className="bg-white border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-600">
+            Compilez d’abord une spécification 2D pour produire la Spécification commune 2D/3D.
+          </div>
+        ) : (
+          <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  Spécification commune 2D/3D (schemaVersion {commonSpec.schemaVersion})
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Dimension : {commonSpec.dimension.toUpperCase()} · {commonSpec.mechanics.length}{' '}
+                  mécanique(s) · {commonSpec.evidence.length} preuve(s) ·{' '}
+                  {commonSpec.uncertainties.length} incertitude(s)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  downloadTextFile(
+                    `${slugifyFilename(commonSpec.title)}-common-spec.json`,
+                    JSON.stringify(commonSpec, null, 2),
+                    'application/json'
+                  )
+                }
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Exporter CommonSpec JSON
+              </button>
+            </div>
+            <pre className="p-5 text-xs font-mono text-slate-800 bg-slate-50 overflow-x-auto max-h-[540px] leading-relaxed">
+              {JSON.stringify(commonSpec, null, 2)}
+            </pre>
+          </div>
+        )
+      ) : editorTab === 'three' ? (
+        !threePlan ? (
+          <div className="bg-white border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-600">
+            Compilez d’abord une spécification 2D pour préparer le plan de scène Three.js.
+          </div>
+        ) : (
+          <div className="bg-white border border-slate-200 rounded-lg p-6 space-y-5">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">
+                Adaptateur structurel Three.js ({threePlan.status})
+              </h3>
+              <p className="mt-1 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5">
+                {threePlan.warning}
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="border border-slate-200 rounded-lg p-4 space-y-1.5">
+                <p className="font-semibold text-slate-900">Configuration caméra préparée</p>
+                <p className="font-mono text-slate-600">
+                  Type : {threePlan.cameraConfig.type} · FOV {threePlan.cameraConfig.fov}° · Position{' '}
+                  [{threePlan.cameraConfig.position.join(', ')}]
+                </p>
+              </div>
+              <div className="border border-slate-200 rounded-lg p-4 space-y-1.5">
+                <p className="font-semibold text-slate-900">Noeuds de scène normalisés</p>
+                <p className="text-slate-600 tabular-nums">
+                  {threePlan.nodes.length} descripteur(s) prêt(s) pour une future scène Three.js
+                </p>
+              </div>
+            </div>
+            <pre className="p-4 text-xs font-mono text-slate-800 bg-slate-50 border border-slate-200 rounded-lg overflow-x-auto max-h-[400px]">
+              {JSON.stringify(threePlan, null, 2)}
+            </pre>
+          </div>
+        )
+      ) : !project.analysis || !project.analysis.canReconstruct ? (
         <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
           <AlertCircle className="w-8 h-8 text-amber-600 mx-auto" />
           <h3 className="mt-3 text-base font-semibold text-slate-900">

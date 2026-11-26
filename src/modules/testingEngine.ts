@@ -1,4 +1,7 @@
+import { ReagCore } from '../core/reagCore';
 import { createBlankProject, createSampleProject } from '../data/sampleProject';
+import { ThreeAdapter } from '../engines/threeAdapter';
+import { buildCommonGameSpecification } from '../types/commonGameSpec';
 import { CapabilityAuditItem, TestCaseResult, TestSuiteResult } from '../types/reag';
 import { GameAnalysisEngine } from './analysisEngine';
 import { GameGenerator } from './gameGenerator';
@@ -100,10 +103,10 @@ export const V1_CAPABILITY_AUDIT: CapabilityAuditItem[] = [
     note: 'Exécutable en navigateur et en simulation headless, synchronisé avec le HTML exporté.',
   },
   {
-    module: 'H. Analyse Python / Serveur / 3D',
-    feature: 'Moteur Python externe, décompilation binaire ou rendu 3D',
-    status: 'non_implemente',
-    note: 'Hors périmètre V2 (stabilisation noyau 2D uniquement).',
+    module: 'H. REAG Core & Spécification commune 2D/3D',
+    feature: '6 moteurs épistémiques sans IA, CommonGameSpecification et adaptateur structurel Three.js',
+    status: 'implemente',
+    note: 'Rendu WebGL 3D complet volontairement différé à la prochaine mission ; adaptateur prêt.',
   },
 ];
 
@@ -570,6 +573,64 @@ export const TestingEngine = {
           const v = ctrl.getVector();
           assert(!v.up && !v.down && !v.left && !v.right, 'Une touche est restée active après perte de focus.');
           return 'Directions réinitialisées proprement sur lostpointercapture, pointercancel et blur.';
+        }
+      )
+    );
+
+    // 16. REAG Core — séparation épistémique et fonctionnement sans IA
+    cases.push(
+      runTestCase(
+        'test_reag_core_epistemic',
+        'H. REAG Core',
+        'Distinction faits vérifiés / observations / hypothèses / contradictions sans IA',
+        () => {
+          const proj = createSampleProject();
+          proj.observations.push({
+            id: 'obs_conflict_core',
+            category: 'deplacement',
+            title: 'Hypothèse contradictoire vitesse',
+            description: 'Vitesse 310 px/s',
+            confidence: 'incertaine',
+            parameters: { speed: 310 },
+            createdAt: new Date().toISOString(),
+          });
+          proj.analysis = GameAnalysisEngine.analyzeProject(proj);
+
+          const evalRes = ReagCore.evaluateProject(proj, [
+            {
+              category: 'score',
+              title: 'Combo IA',
+              description: 'Bonus hypothétique x2',
+              rationale: 'Test proposition IA',
+            },
+          ]);
+
+          assert(evalRes.countsByKind.fait_verifie > 0, 'Aucun fait vérifié détecté.');
+          assert(evalRes.countsByKind.hypothese > 0, 'Les propositions IA doivent être classées en hypothèses.');
+          assert(evalRes.countsByKind.contradiction >= 1, 'La contradiction n’a pas été préservée dans REAG Core.');
+          assert(evalRes.decisions.length >= 2, 'DecisionEngine n’a produit aucune décision tracée.');
+          return `${evalRes.countsByKind.fait_verifie} fait(s), ${evalRes.countsByKind.hypothese} hypothèse(s), ${evalRes.countsByKind.contradiction} contradiction(s) préservée(s).`;
+        }
+      )
+    );
+
+    // 17. Spécification commune 2D/3D et adaptateur Three.js
+    cases.push(
+      runTestCase(
+        'test_common_spec_three_adapter',
+        'H. Spécification commune 2D/3D',
+        'Génération de CommonGameSpecification et préparation ThreeAdapter',
+        () => {
+          const sample = createSampleProject();
+          const analysis = GameAnalysisEngine.analyzeProject(sample);
+          const spec = SpecificationEngine.buildSpecification(sample, analysis);
+          const validation = SpecificationEngine.validateSpecification(spec);
+          const common = buildCommonGameSpecification(spec, analysis, validation, '3d');
+          assert(common.dimension === '3d', 'Dimension 3D non propagée.');
+          assert(common.scenes.length === 1 && common.cameras[0].mode === 'perspective_follow', 'Caméra 3D non préparée.');
+          const plan = ThreeAdapter.prepareScenePlan(common);
+          assert(plan.readyForFuture3D && plan.nodes.length >= 4, 'Plan Three.js incomplet.');
+          return `CommonSpec v${common.schemaVersion} (dimension ${common.dimension}) et ${plan.nodes.length} noeud(s) Three.js préparés.`;
         }
       )
     );

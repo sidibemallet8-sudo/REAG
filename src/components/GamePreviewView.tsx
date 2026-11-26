@@ -5,9 +5,11 @@ import {
   ArrowRight,
   ArrowUp,
   Download,
+  ExternalLink,
   Pause,
   Play,
   RotateCcw,
+  Square,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -18,12 +20,18 @@ import {
   stepRuntime,
 } from '../modules/gameRuntime';
 import { RuntimeInputController } from '../modules/inputController';
+import { PreviewServiceState } from '../services/localHostClient';
 import { GameRuntimeState, InputVector, ReagProject, ReagSettings } from '../types/reag';
 import { downloadTextFile, slugifyFilename } from '../utils/download';
 
 interface GamePreviewViewProps {
   project: ReagProject;
   settings: ReagSettings;
+  localHostAvailable: boolean;
+  previewService: PreviewServiceState | null;
+  previewBusy: boolean;
+  onStartLocalPreview: () => void;
+  onStopLocalPreview: () => void;
   onToggleSetting: (key: 'soundEnabled' | 'showRuntimeDebugVectors') => void;
   onGoToGenerator: () => void;
 }
@@ -39,6 +47,11 @@ const STATUS_TEXT: Record<GameRuntimeState['status'], string> = {
 export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
   project,
   settings,
+  localHostAvailable,
+  previewService,
+  previewBusy,
+  onStartLocalPreview,
+  onStopLocalPreview,
   onToggleSetting,
   onGoToGenerator,
 }) => {
@@ -239,10 +252,68 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
   }
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-      <section className="xl:col-span-8 bg-white border border-slate-200 rounded-lg p-5 space-y-4">
-        {/* HUD épuré au-dessus du canvas */}
-        <div className="flex items-center justify-between gap-4 flex-wrap border-b border-slate-200 pb-3">
+    <div className="space-y-5">
+      {/* Barre de contrôle Preview Manager (2ème port localhost / Chrome) */}
+      <div className="bg-white border border-slate-200 rounded-lg px-5 py-3.5 flex items-center justify-between gap-4 flex-wrap">
+        <div className="space-y-0.5 text-xs">
+          <p className="font-semibold text-slate-900">
+            Serveur de prévisualisation local (onglet Chrome séparé)
+          </p>
+          <p className="text-slate-600">
+            {previewService?.running && previewService.url ? (
+              <>
+                Actif sur{' '}
+                <a
+                  href={previewService.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-blue-700 hover:underline"
+                >
+                  {previewService.url}
+                </a>
+                {previewService.browserLaunchMessage
+                  ? ` · ${previewService.browserLaunchMessage}`
+                  : ''}
+              </>
+            ) : localHostAvailable ? (
+              'Prêt à démarrer sur un port localhost libre.'
+            ) : (
+              'Serveur local REAG non détecté ; utilisez le lecteur intégré ci-dessous.'
+            )}
+          </p>
+          {previewService?.lastError && (
+            <p className="text-rose-700">{previewService.lastError}</p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+          <button
+            type="button"
+            disabled={!localHostAvailable || previewBusy}
+            onClick={onStartLocalPreview}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            {previewBusy ? 'Démarrage...' : 'Lancer le jeu (Chrome / Serveur local)'}
+          </button>
+          {previewService?.running && (
+            <button
+              type="button"
+              disabled={previewBusy}
+              onClick={onStopLocalPreview}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors cursor-pointer"
+            >
+              <Square className="w-3.5 h-3.5" />
+              Arrêter l’aperçu
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+        <section className="xl:col-span-8 bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+          {/* HUD épuré au-dessus du canvas */}
+          <div className="flex items-center justify-between gap-4 flex-wrap border-b border-slate-200 pb-3">
           <div>
             <h3 className="text-base font-semibold text-slate-900">{artifact.spec.title}</h3>
             <p className="text-xs text-slate-500">
@@ -545,6 +616,7 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
           </div>
         </div>
       </aside>
+      </div>
     </div>
   );
 };

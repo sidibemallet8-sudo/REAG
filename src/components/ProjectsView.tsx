@@ -1,5 +1,15 @@
 import React, { useRef, useState } from 'react';
-import { Copy, Download, FolderPlus, RotateCcw, Trash2, Upload } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  Download,
+  FolderPlus,
+  Pencil,
+  RotateCcw,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { ReagProject } from '../types/reag';
 import { downloadTextFile, slugifyFilename } from '../utils/download';
 
@@ -8,6 +18,7 @@ interface ProjectsViewProps {
   activeProjectId: string;
   onSelectProject: (id: string) => void;
   onCreateProject: (name: string, referenceSubject: string, description: string) => void;
+  onRenameProject: (id: string, name: string) => void;
   onDuplicateProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
   onExportProject: (project: ReagProject) => string;
@@ -20,6 +31,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   activeProjectId,
   onSelectProject,
   onCreateProject,
+  onRenameProject,
   onDuplicateProject,
   onDeleteProject,
   onExportProject,
@@ -29,6 +41,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const [name, setName] = useState('');
   const [referenceSubject, setReferenceSubject] = useState('');
   const [description, setDescription] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -44,6 +59,32 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       setFeedback({
         type: 'err',
         text: err instanceof Error ? err.message : 'Erreur lors de la création.',
+      });
+    }
+  };
+
+  const handleStartRename = (project: ReagProject) => {
+    setConfirmDeleteId(null);
+    setEditingId(project.id);
+    setEditingName(project.name);
+  };
+
+  const handleConfirmRename = (e: React.FormEvent, projectId: string) => {
+    e.preventDefault();
+    const trimmed = editingName.trim();
+    if (!trimmed) {
+      setFeedback({ type: 'err', text: 'Le nom du projet ne peut pas être vide.' });
+      return;
+    }
+    try {
+      onRenameProject(projectId, trimmed);
+      setEditingId(null);
+      setEditingName('');
+      setFeedback({ type: 'ok', text: 'Projet renommé.' });
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Renommage impossible.',
       });
     }
   };
@@ -69,7 +110,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     <div className="space-y-8">
       <div className="bg-white border border-slate-200 rounded-lg p-5">
         <h2 className="text-base font-semibold text-slate-900">
-          Périmètre méthodologique de REAG V1
+          Périmètre méthodologique de REAG V2
         </h2>
         <p className="mt-1.5 text-sm text-slate-600 leading-relaxed max-w-4xl">
           REAG formalise des mécaniques de jeu à partir de vos sources documentaires et
@@ -94,7 +135,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <section className="lg:col-span-5 bg-white border border-slate-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-slate-900">Nouveau projet</h3>
+          <h3 className="text-lg font-semibold text-slate-900">Création rapide</h3>
           <p className="mt-1 text-sm text-slate-600">
             Initialisez un espace d’étude vierge avant d’ajouter vos sources.
           </p>
@@ -176,7 +217,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Projets enregistrés</h3>
               <p className="text-xs text-slate-500 tabular-nums">
-                {projects.length} projet(s) stocké(s) localement
+                {projects.length} projet(s) synchronisé(s) localement
               </p>
             </div>
             <button
@@ -195,25 +236,57 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           <div className="divide-y divide-slate-200">
             {projects.map((project) => {
               const isActive = project.id === activeProjectId;
+              const isEditing = editingId === project.id;
+              const isConfirmingDelete = confirmDeleteId === project.id;
               return (
                 <div
                   key={project.id}
-                  className={`p-5 transition-colors ${
+                  className={`p-5 transition-colors space-y-3 ${
                     isActive ? 'bg-slate-50' : 'bg-white hover:bg-slate-50/60'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2.5 flex-wrap">
-                        <h4 className="text-base font-semibold text-slate-900 truncate">
-                          {project.name}
-                        </h4>
-                        {isActive && (
-                          <span className="text-xs font-medium text-blue-700">
-                            · Projet actif
-                          </span>
-                        )}
-                      </div>
+                      {isEditing ? (
+                        <form
+                          onSubmit={(e) => handleConfirmRename(e, project.id)}
+                          className="flex items-center gap-2 flex-wrap"
+                        >
+                          <input
+                            type="text"
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            aria-label="Nouveau nom du projet"
+                            className="rounded-lg border border-blue-500 bg-white px-2.5 py-1 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                          />
+                          <button
+                            type="submit"
+                            className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            Valider
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingId(null)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            Annuler
+                          </button>
+                        </form>
+                      ) : (
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <h4 className="text-base font-semibold text-slate-900 truncate">
+                            {project.name}
+                          </h4>
+                          {isActive && (
+                            <span className="text-xs font-medium text-blue-700">
+                              · Projet actif
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <p className="mt-1 text-sm text-slate-600 line-clamp-2">
                         {project.description || project.referenceSubject || 'Aucune description.'}
                       </p>
@@ -244,6 +317,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       )}
                       <button
                         type="button"
+                        onClick={() => handleStartRename(project)}
+                        title="Renommer"
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        Renommer
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => {
                           const json = onExportProject(project);
                           downloadTextFile(
@@ -269,7 +351,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => onDeleteProject(project.id)}
+                        onClick={() => setConfirmDeleteId(project.id)}
                         title="Supprimer"
                         className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                       >
@@ -278,6 +360,34 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       </button>
                     </div>
                   </div>
+
+                  {isConfirmingDelete && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+                      <span className="text-xs font-medium text-rose-900">
+                        Confirmer la suppression définitive de « {project.name} » ?
+                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteProject(project.id);
+                            setConfirmDeleteId(null);
+                            setFeedback({ type: 'ok', text: `Projet « ${project.name} » supprimé.` });
+                          }}
+                          className="rounded-lg bg-rose-700 px-3 py-1 text-xs font-medium text-white hover:bg-rose-800 cursor-pointer"
+                        >
+                          Confirmer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                        >
+                          Annuler
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
