@@ -1,8 +1,12 @@
 import {
   AnalysisReport,
+  ContradictoryValueEntry,
   ExtractedMechanic,
   GameObservation,
+  InvalidSourceReference,
+  MechanicContradiction,
   ObservationCategory,
+  ObservationConfidence,
   ReagProject,
 } from '../types/reag';
 
@@ -18,40 +22,61 @@ const CATEGORY_LABELS: Record<ObservationCategory, string> = {
   physique: 'Paramètres physiques',
 };
 
+const CONFIDENCE_WEIGHT: Record<ObservationConfidence, number> = {
+  confirmee: 3,
+  deduite: 2,
+  incertaine: 1,
+};
+
 export const V1_KNOWN_LIMITATIONS: string[] = [
-  "REAG V1 ne convertit jamais un jeu commercial à partir de son seul nom ; toute génération exige des observations explicites.",
-  "Le moteur de rendu V1 cible exclusivement l'arène 2D vue de dessus (HTML5 Canvas) avec collisions AABB/cercle.",
+  "REAG ne convertit jamais un jeu commercial à partir de son seul nom ; toute génération exige des observations explicites.",
+  "Le moteur de rendu cible exclusivement l'arène 2D vue de dessus (HTML5 Canvas) avec collisions AABB/cercle.",
   'Les graphismes générés sont géométriques et vectoriels ; aucun rip ou extraction de sprites commerciaux n’est effectué.',
-  'Les mécaniques complexes non supportées en V1 (3D, réseau multijoueur, arbre de dialogues, inventaire RPG) ne sont pas générées automatiquement.',
+  'Les mécaniques complexes non supportées (3D, réseau multijoueur, arbre de dialogues, inventaire RPG) ne sont pas générées automatiquement.',
 ];
 
-function extractNumericParam(
-  observations: GameObservation[],
-  key: string,
-  regex: RegExp
-): number | undefined {
-  for (const obs of observations) {
-    const raw = obs.parameters[key];
-    if (typeof raw === 'number' && Number.isFinite(raw)) {
-      return raw;
-    }
-    const match = obs.description.match(regex);
-    if (match && match[1]) {
-      const val = Number(match[1]);
-      if (Number.isFinite(val)) return val;
-    }
-  }
-  return undefined;
-}
+function extractInlineParamsForCategory(
+  category: ObservationCategory,
+  obs: GameObservation
+): Record<string, string | number | boolean> {
+  const params: Record<string, string | number | boolean> = { ...obs.parameters };
+  const desc = obs.description;
 
-function extractStringParam(observations: GameObservation[], key: string): string | undefined {
-  for (const obs of observations) {
-    const raw = obs.parameters[key];
-    if (typeof raw === 'string' && raw.trim().length > 0) {
-      return raw.trim();
+  if (category === 'deplacement' && params.speed === undefined) {
+    const m = desc.match(/(\d+(?:[.,]\d+)?)\s*(?:px\/s|px\/sec|px)/i);
+    if (m) params.speed = Number(m[1].replace(',', '.'));
+  }
+  if (category === 'collecte') {
+    if (params.count === undefined) {
+      const m = desc.match(/(\d+)\s*(?:éclats?|eclats?|objets?|pièces?|pieces?|items?)/i);
+      if (m) params.count = Number(m[1]);
+    }
+    if (params.pointsPerItem === undefined) {
+      const m = desc.match(/(\d+)\s*(?:points?|pts)/i);
+      if (m) params.pointsPerItem = Number(m[1]);
     }
   }
-  return undefined;
+  if (category === 'danger') {
+    if (params.hazardCount === undefined) {
+      const m = desc.match(/(\d+)\s*(?:sentinelles?|ennemis?|dangers?)/i);
+      if (m) params.hazardCount = Number(m[1]);
+    }
+    if (params.hazardSpeed === undefined) {
+      const m = desc.match(/(\d+(?:[.,]\d+)?)\s*(?:px\/s|px\/sec)/i);
+      if (m) params.hazardSpeed = Number(m[1].replace(',', '.'));
+    }
+  }
+  if (category === 'defaite' && params.initialLives === undefined) {
+    const m = desc.match(/(\d+)\s*(?:vies?|pv)/i);
+    if (m) params.initialLives = Number(m[1]);
+  }
+  if ((category === 'victoire' || category === 'defaite') && params.timeLimitSeconds === undefined) {
+    const m = desc.match(/(\d+)\s*(?:s|sec|secondes?)/i);
+    if (m && /(chrono|temps|limite|minuteur|durée)/i.test(desc)) {
+      params.timeLimitSeconds = Number(m[1]);
+    }
+  }
+  return params;
 }
 
 export const GameAnalysisEngine = {
@@ -60,8 +85,46 @@ export const GameAnalysisEngine = {
     const observations = project.observations;
     const sources = project.sources;
 
-    // Garde-fou méthodologique fondamental : refus honnête sans matière observable suffisante
+    // Vérification stricte de la traçabilité de chaque observation vers une source existante
+    const invalidSourceReferences: InvalidSourceReference[] = [];
+    const unsourcedObservationIds: string[] = [];
+    let sourcedObservationCount = 0;
+
+    for (const obs of observations) {
+      if (obs.sourceId && obs.sourceId.trim().length > 0) {
+        if (validSourceIds.has(obs.sourceId)) {
+          sourcedObservationCount += 1;
+        } else {
+          invalidSourceReferences.push({
+            observationId: obs.id,
+            observationTitle: obs.title,
+            invalidSourceId: obs.sourceId,
+          });
+        }
+      } else {
+        unsourcedObservationIds.push(obs.id);
+      }
+    }
+
+    const observationTraceabilityRatio =
+      observations.length > 0
+        ? Math.round((sourcedObservationCount / observations.length) * 100)
+        : 0;
+
+    // Garde-fou méthodologique : refus honnête sans matière observable suffisante
     if (observations.length < 2) {
+      const refusalGaps: string[] = [
+        'Minimum de 2 observations requis pour démarrer l’extraction.',
+      ];
+      if (sources.length === 0) {
+        refusalGaps.push('Aucune source documentaire enregistrée pour justifier les mécaniques.');
+      }
+      if (invalidSourceReferences.length > 0) {
+        refusalGaps.push(
+          `${invalidSourceReferences.length} observation(s) référencent une source inexistante.`
+        );
+      }
+
       return {
         projectId: project.id,
         analyzedAt: new Date().toISOString(),
@@ -72,17 +135,18 @@ export const GameAnalysisEngine = {
             : 'Reconstruction refusée : au moins 2 observations distinctes (ex. déplacement et objectif) sont requises pour formaliser un système jouable.',
         detectedArchetype: 'indetermine',
         extractedMechanics: [],
+        contradictions: [],
+        invalidSourceReferences,
+        unsourcedObservationIds,
         controlBindings: [],
-        gaps: [
-          'Minimum de 2 observations requis pour démarrer l’extraction.',
-          sources.length === 0
-            ? 'Aucune source documentaire enregistrée pour justifier les mécaniques.'
-            : '',
-        ].filter(Boolean),
+        gaps: refusalGaps,
         v1Limitations: [...V1_KNOWN_LIMITATIONS],
         metrics: {
           sourceCount: sources.length,
           observationCount: observations.length,
+          sourcedObservationCount,
+          invalidSourceRefCount: invalidSourceReferences.length,
+          observationTraceabilityRatio,
           sourcedMechanicCount: 0,
           totalMechanicCount: 0,
           sourceTraceabilityRatio: 0,
@@ -98,6 +162,7 @@ export const GameAnalysisEngine = {
     }
 
     const extractedMechanics: ExtractedMechanic[] = [];
+    const contradictions: MechanicContradiction[] = [];
 
     for (const [category, catObs] of byCategory.entries()) {
       const evidenceSourceIds = Array.from(
@@ -108,31 +173,59 @@ export const GameAnalysisEngine = {
         )
       );
 
-      const mergedParams: Record<string, string | number | boolean> = {};
+      // Recensement de toutes les valeurs par paramètre sans écrasement silencieux
+      const paramCandidates = new Map<string, ContradictoryValueEntry[]>();
       for (const obs of catObs) {
-        Object.assign(mergedParams, obs.parameters);
+        const extracted = extractInlineParamsForCategory(category, obs);
+        for (const [key, val] of Object.entries(extracted)) {
+          if (val === undefined) continue;
+          const entries = paramCandidates.get(key) || [];
+          entries.push({
+            observationId: obs.id,
+            observationTitle: obs.title,
+            value: val,
+            confidence: obs.confidence,
+            sourceId: obs.sourceId,
+          });
+          paramCandidates.set(key, entries);
+        }
       }
 
-      if (category === 'deplacement') {
-        const speed = extractNumericParam(catObs, 'speed', /(\d+)\s*(?:px\/s|px)/i);
-        if (speed) mergedParams.speed = speed;
+      const mergedParams: Record<string, string | number | boolean> = {};
+      for (const [key, entries] of paramCandidates.entries()) {
+        // Classement par niveau de confiance (confirmee > deduite > incertaine), puis source valide
+        const ranked = [...entries].sort((a, b) => {
+          const confDiff = CONFIDENCE_WEIGHT[b.confidence] - CONFIDENCE_WEIGHT[a.confidence];
+          if (confDiff !== 0) return confDiff;
+          const aValidSrc = a.sourceId && validSourceIds.has(a.sourceId) ? 1 : 0;
+          const bValidSrc = b.sourceId && validSourceIds.has(b.sourceId) ? 1 : 0;
+          return bValidSrc - aValidSrc;
+        });
+
+        mergedParams[key] = ranked[0].value;
+
+        const distinctValues = new Set(entries.map((e) => String(e.value)));
+        if (distinctValues.size > 1) {
+          contradictions.push({
+            id: `contra_${category}_${key}`,
+            category,
+            parameterKey: key,
+            values: entries,
+            selectedValue: ranked[0].value,
+            resolutionNote: `Désaccord conservé sur "${key}" (${Array.from(distinctValues).join(
+              ' vs '
+            )}). Valeur retenue par priorité de confiance (${ranked[0].confidence}) : ${String(
+              ranked[0].value
+            )}.`,
+          });
+        }
       }
-      if (category === 'collecte') {
-        const count = extractNumericParam(catObs, 'count', /(\d+)\s*(?:éclats?|eclats?|objets?|pièces?|items?)/i);
-        const pts = extractNumericParam(catObs, 'pointsPerItem', /(\d+)\s*(?:points?|pts)/i);
-        if (count) mergedParams.count = count;
-        if (pts) mergedParams.pointsPerItem = pts;
-      }
-      if (category === 'danger') {
-        const hazardCount = extractNumericParam(catObs, 'hazardCount', /(\d+)\s*(?:sentinelles?|ennemis?|dangers?)/i);
-        const hazardSpeed = extractNumericParam(catObs, 'hazardSpeed', /(\d+)\s*(?:px\/s)/i);
-        if (hazardCount) mergedParams.hazardCount = hazardCount;
-        if (hazardSpeed) mergedParams.hazardSpeed = hazardSpeed;
-      }
-      if (category === 'defaite') {
-        const lives = extractNumericParam(catObs, 'initialLives', /(\d+)\s*(?:vies?|pv)/i);
-        if (lives) mergedParams.initialLives = lives;
-      }
+
+      // Une mécanique n'est considérée totalement sourcée que si toutes ses observations
+      // possèdent une source existante valide
+      const allCategoryObsSourced = catObs.every(
+        (o) => Boolean(o.sourceId && validSourceIds.has(o.sourceId))
+      );
 
       extractedMechanics.push({
         id: `mech_${category}`,
@@ -141,32 +234,50 @@ export const GameAnalysisEngine = {
         ruleSummary: catObs.map((o) => o.description).join(' '),
         evidenceSourceIds,
         evidenceObservationIds: catObs.map((o) => o.id),
-        sourced: evidenceSourceIds.length > 0,
+        sourced: allCategoryObsSourced && evidenceSourceIds.length > 0,
         parameters: mergedParams,
       });
     }
 
     const gaps: string[] = [];
     if (sources.length === 0) {
-      gaps.push('Aucune source documentaire enregistrée : toutes les mécaniques reposent uniquement sur des observations non sourcées.');
+      gaps.push(
+        'Aucune source documentaire enregistrée : toutes les mécaniques reposent uniquement sur des observations non sourcées.'
+      );
+    }
+    if (invalidSourceReferences.length > 0) {
+      gaps.push(
+        `${invalidSourceReferences.length} observation(s) référencent un identifiant de source inexistant (${invalidSourceReferences
+          .map((r) => `${r.observationTitle} -> ${r.invalidSourceId}`)
+          .join(', ')}).`
+      );
+    }
+    if (unsourcedObservationIds.length > 0 && sources.length > 0) {
+      gaps.push(
+        `${unsourcedObservationIds.length} observation(s) ne sont reliées à aucune source documentaire.`
+      );
+    }
+    if (contradictions.length > 0) {
+      gaps.push(
+        `${contradictions.length} contradiction(s) détectée(s) entre observations ; les désaccords et niveaux de confiance sont préservés dans le rapport.`
+      );
     }
     if (!byCategory.has('deplacement')) {
-      gaps.push('Aucun comportement de déplacement observé (une vitesse standard de repli sera utilisée si généré).');
+      gaps.push(
+        'Aucun comportement de déplacement observé (une vitesse standard de repli sera utilisée si généré).'
+      );
     }
     if (!byCategory.has('collecte') && !byCategory.has('victoire')) {
       gaps.push('Aucune mécanique de collecte ou condition de victoire explicite n’a été observée.');
     }
     if (!byCategory.has('obstacle')) {
-      gaps.push('Aucun obstacle statique documenté : l’arène risque d’être trop ouverte sans paramétrage manuel.');
+      gaps.push(
+        'Aucun obstacle statique documenté : l’arène risque d’être trop ouverte sans paramétrage manuel.'
+      );
     }
     if (!byCategory.has('defaite')) {
-      gaps.push('Aucune condition de défaite explicite observée (vies / limite de temps non documentées).');
-    }
-
-    const unsourcedCount = extractedMechanics.filter((m) => !m.sourced).length;
-    if (unsourcedCount > 0 && sources.length > 0) {
       gaps.push(
-        `${unsourcedCount} mécanique(s) extraite(s) ne sont reliées à aucune source documentaire dans le Gestionnaire de sources.`
+        'Aucune condition de défaite explicite observée (vies / limite de temps non documentées).'
       );
     }
 
@@ -184,18 +295,13 @@ export const GameAnalysisEngine = {
 
     const sourcedMechanicCount = extractedMechanics.filter((m) => m.sourced).length;
     const totalMechanicCount = extractedMechanics.length;
-    const sourceTraceabilityRatio =
+    // Traçabilité globale plafonnée par la traçabilité réelle des observations
+    const rawMechanicRatio =
       totalMechanicCount > 0 ? Math.round((sourcedMechanicCount / totalMechanicCount) * 100) : 0;
+    const sourceTraceabilityRatio = Math.min(rawMechanicRatio, observationTraceabilityRatio);
 
-    // Si aucune mécanique de déplacement ET aucune collecte/victoire n'est présente,
-    // vérifier qu'il reste au moins des observations exploitables
     const hasCoreLoop =
       byCategory.has('deplacement') || byCategory.has('collecte') || byCategory.has('victoire');
-
-    const collectibleLabel = extractStringParam(observations, 'label');
-    if (collectibleLabel) {
-      // Conservation informative dans les paramètres déjà fusionnés
-    }
 
     return {
       projectId: project.id,
@@ -206,12 +312,18 @@ export const GameAnalysisEngine = {
         : 'Reconstruction bloquée : les observations fournies ne décrivent ni déplacement ni objectif de jeu exploitable.',
       detectedArchetype: hasCoreLoop ? 'arcade_arene_2d' : 'indetermine',
       extractedMechanics,
+      contradictions,
+      invalidSourceReferences,
+      unsourcedObservationIds,
       controlBindings,
       gaps,
       v1Limitations: [...V1_KNOWN_LIMITATIONS],
       metrics: {
         sourceCount: sources.length,
         observationCount: observations.length,
+        sourcedObservationCount,
+        invalidSourceRefCount: invalidSourceReferences.length,
+        observationTraceabilityRatio,
         sourcedMechanicCount,
         totalMechanicCount,
         sourceTraceabilityRatio,

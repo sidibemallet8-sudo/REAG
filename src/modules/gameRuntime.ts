@@ -6,6 +6,26 @@ import {
   RuntimeLogEntry,
 } from '../types/reag';
 
+const SUBSTEP_MS = 20;
+const MAX_STEP_DT_MS = 1000;
+
+export function createEmptyInputVector(): InputVector {
+  return { up: false, down: false, left: false, right: false };
+}
+
+export function isVictoryReached(
+  winCondition: 'collect_all' | 'target_score',
+  collectedCount: number,
+  totalCollectibles: number,
+  score: number,
+  targetScore: number
+): boolean {
+  if (winCondition === 'target_score') {
+    return score >= targetScore;
+  }
+  return totalCollectibles > 0 && collectedCount >= totalCollectibles;
+}
+
 function circleRectCollides(cx: number, cy: number, r: number, rect: RectObstacle): boolean {
   const closestX = Math.max(rect.x, Math.min(cx, rect.x + rect.width));
   const closestY = Math.max(rect.y, Math.min(cy, rect.y + rect.height));
@@ -21,7 +41,7 @@ function pushEvent(
   message: string
 ): RuntimeLogEntry[] {
   const entry: RuntimeLogEntry = {
-    id: `evt_${timestampMs}_${Math.random().toString(36).slice(2, 6)}`,
+    id: `evt_${Math.round(timestampMs)}_${Math.random().toString(36).slice(2, 6)}`,
     timestampMs: Math.round(timestampMs),
     type,
     message,
@@ -36,7 +56,10 @@ export interface StepCallbacks {
   onDefeat?: () => void;
 }
 
-export function playRuntimeTone(kind: 'collect' | 'damage' | 'victory' | 'defeat', enabled: boolean): void {
+export function playRuntimeTone(
+  kind: 'collect' | 'damage' | 'victory' | 'defeat',
+  enabled: boolean
+): void {
   if (!enabled || typeof window === 'undefined') return;
   try {
     const AudioCtx =
@@ -134,22 +157,20 @@ export function createRuntimeState(
   };
 }
 
-export function stepRuntime(
+function stepSingleSubstep(
   state: GameRuntimeState,
   input: InputVector,
-  dtMs: number,
+  subDtMs: number,
   callbacks?: StepCallbacks
 ): GameRuntimeState {
-  // Mise à jour des particules même en fin de partie pour un rendu propre
-  const clampedDtMs = Math.max(0, Math.min(dtMs, 50));
-  const dt = clampedDtMs / 1000;
+  const dt = subDtMs / 1000;
 
   const updatedParticles = state.particles
     .map((p) => ({
       ...p,
       x: p.x + p.vx * dt,
       y: p.y + p.vy * dt,
-      lifeMs: p.lifeMs - clampedDtMs,
+      lifeMs: p.lifeMs - subDtMs,
     }))
     .filter((p) => p.lifeMs > 0);
 
@@ -161,11 +182,11 @@ export function stepRuntime(
   }
 
   let events = state.events;
-  const elapsedMs = state.elapsedMs + clampedDtMs;
+  const elapsedMs = state.elapsedMs + subDtMs;
   let timeRemainingMs = state.timeRemainingMs;
 
   if (timeRemainingMs !== null) {
-    timeRemainingMs = Math.max(0, timeRemainingMs - clampedDtMs);
+    timeRemainingMs = Math.max(0, timeRemainingMs - subDtMs);
     if (timeRemainingMs <= 0) {
       events = pushEvent(events, elapsedMs, 'fin', 'Temps limite écoulé : défaite.');
       callbacks?.onDefeat?.();
@@ -182,7 +203,7 @@ export function stepRuntime(
 
   const { spec } = state;
   const player = { ...state.player };
-  player.invulnerableRemainingMs = Math.max(0, player.invulnerableRemainingMs - clampedDtMs);
+  player.invulnerableRemainingMs = Math.max(0, player.invulnerableRemainingMs - subDtMs);
 
   let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
@@ -198,7 +219,6 @@ export function stepRuntime(
     player.facingAngle = Math.atan2(dy, dx);
   }
 
-  // Résolution par axe pour glissement fluide le long des obstacles
   const targetX = Math.max(
     player.radius,
     Math.min(spec.arena.width - player.radius, player.x + player.vx * dt)
@@ -215,7 +235,6 @@ export function stepRuntime(
     player.y = targetY;
   }
 
-  // Collecte des objets
   let score = state.score;
   let collectedCount = state.collectedCount;
   const particles = [...updatedParticles];
@@ -251,11 +270,15 @@ export function stepRuntime(
     return item;
   });
 
-  // Vérification victoire
-  const wonByCollect = collectedCount >= state.totalCollectibles;
-  const wonByScore =
-    spec.rules.winCondition === 'target_score' && score >= spec.rules.targetScore;
-  if (wonByCollect || wonByScore) {
+  if (
+    isVictoryReached(
+      spec.rules.winCondition,
+      collectedCount,
+      state.totalCollectibles,
+      score,
+      spec.rules.targetScore
+    )
+  ) {
     events = pushEvent(events, elapsedMs, 'fin', `Victoire atteinte avec un score de ${score} pts.`);
     callbacks?.onVictory?.();
     return {
@@ -272,7 +295,6 @@ export function stepRuntime(
     };
   }
 
-  // Mise à jour des dangers mobiles et test de collision
   let status: GameRuntimeState['status'] = 'PLAYING';
   const hazards = state.hazards.map((h) => {
     const nextH = { ...h };
@@ -360,6 +382,32 @@ export function stepRuntime(
   };
 }
 
+export function stepRuntime(
+  state: GameRuntimeState,
+  input: InputVector,
+  dtMs: number,
+  callbacks?: StepCallbacks
+): GameRuntimeState {
+  if (!Number.isFinite(dtMs) || dtMs <= 0) {
+    return state;
+  }
+
+  let remaining = Math.min(dtMs, MAX_STEP_DT_MS);
+  let current = state;
+
+  if (current.status !== 'PLAYING') {
+    return stepSingleSubstep(current, input, Math.min(remaining, SUBSTEP_MS), callbacks);
+  }
+
+  while (remaining > 0 && current.status === 'PLAYING') {
+    const chunk = Math.min(SUBSTEP_MS, remaining);
+    current = stepSingleSubstep(current, input, chunk, callbacks);
+    remaining -= chunk;
+  }
+
+  return current;
+}
+
 export function renderRuntimeCanvas(
   ctx: CanvasRenderingContext2D,
   state: GameRuntimeState,
@@ -368,7 +416,6 @@ export function renderRuntimeCanvas(
   const { spec } = state;
   const { width, height } = spec.arena;
 
-  // Fond d'arène + grille technique discrète
   ctx.fillStyle = spec.arena.backgroundColor;
   ctx.fillRect(0, 0, width, height);
 
@@ -385,12 +432,10 @@ export function renderRuntimeCanvas(
   }
   ctx.stroke();
 
-  // Bordure intérieure
   ctx.strokeStyle = spec.arena.wallColor;
   ctx.lineWidth = 2;
   ctx.strokeRect(1, 1, width - 2, height - 2);
 
-  // Obstacles rectangulaires
   for (const wall of state.obstacles) {
     ctx.fillStyle = spec.obstacles.color;
     ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
@@ -399,7 +444,6 @@ export function renderRuntimeCanvas(
     ctx.strokeRect(wall.x + 0.5, wall.y + 0.5, wall.width - 1, wall.height - 1);
   }
 
-  // Objets à collecter (losanges nets)
   for (const col of state.collectibles) {
     if (col.collected) continue;
     ctx.save();
@@ -414,7 +458,6 @@ export function renderRuntimeCanvas(
     ctx.restore();
   }
 
-  // Dangers mobiles
   for (const haz of state.hazards) {
     ctx.save();
     ctx.fillStyle = spec.hazards.color;
@@ -435,7 +478,6 @@ export function renderRuntimeCanvas(
     ctx.restore();
   }
 
-  // Particules d'impact / collecte
   for (const p of state.particles) {
     ctx.save();
     ctx.globalAlpha = Math.max(0, p.lifeMs / p.maxLifeMs);
@@ -444,7 +486,6 @@ export function renderRuntimeCanvas(
     ctx.restore();
   }
 
-  // Personnage joueur
   ctx.save();
   const blinking =
     state.player.invulnerableRemainingMs > 0 &&
@@ -458,7 +499,6 @@ export function renderRuntimeCanvas(
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Indicateur directionnel du personnage
   const dirX = state.player.x + Math.cos(state.player.facingAngle) * (state.player.radius - 3);
   const dirY = state.player.y + Math.sin(state.player.facingAngle) * (state.player.radius - 3);
   ctx.fillStyle = '#0F172A';

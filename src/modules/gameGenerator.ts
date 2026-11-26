@@ -37,7 +37,17 @@ function escapeHtml(text: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export function serializeJsonForHtmlScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 export const GameGenerator = {
@@ -53,7 +63,7 @@ export const GameGenerator = {
     const obstacles: RectObstacle[] = [];
     let attempts = 0;
 
-    while (obstacles.length < spec.obstacles.count && attempts < 240) {
+    while (obstacles.length < spec.obstacles.count && attempts < 360) {
       attempts += 1;
       const w = Math.round(
         spec.obstacles.minSize + rand() * (spec.obstacles.maxSize - spec.obstacles.minSize)
@@ -61,8 +71,12 @@ export const GameGenerator = {
       const h = Math.round(
         spec.obstacles.minSize + rand() * (spec.obstacles.maxSize - spec.obstacles.minSize)
       );
-      const x = Math.round(52 + rand() * (width - w - 104));
-      const y = Math.round(48 + rand() * (height - h - 96));
+      const xRange = width - w - 104;
+      const yRange = height - h - 96;
+      if (xRange <= 0 || yRange <= 0) break;
+
+      const x = Math.round(52 + rand() * xRange);
+      const y = Math.round(48 + rand() * yRange);
 
       const candidate: RectObstacle = {
         id: `obs_wall_${obstacles.length + 1}`,
@@ -87,11 +101,15 @@ export const GameGenerator = {
 
     const collectibles: CollectibleEntity[] = [];
     attempts = 0;
-    while (collectibles.length < spec.collectibles.count && attempts < 500) {
+    while (collectibles.length < spec.collectibles.count && attempts < 700) {
       attempts += 1;
       const r = spec.collectibles.radius;
-      const cx = Math.round(36 + rand() * (width - 72));
-      const cy = Math.round(36 + rand() * (height - 72));
+      const xRange = width - 72;
+      const yRange = height - 72;
+      if (xRange <= 0 || yRange <= 0) break;
+
+      const cx = Math.round(36 + rand() * xRange);
+      const cy = Math.round(36 + rand() * yRange);
 
       const hitsWall = obstacles.some((wall) => circleIntersectsRect(cx, cy, r + 10, wall));
       const nearSpawn =
@@ -112,11 +130,15 @@ export const GameGenerator = {
 
     const hazards: HazardEntity[] = [];
     attempts = 0;
-    while (hazards.length < spec.hazards.count && attempts < 300) {
+    while (hazards.length < spec.hazards.count && attempts < 450) {
       attempts += 1;
       const r = spec.hazards.radius;
-      const hx = Math.round(width * 0.42 + rand() * (width * 0.5 - 32));
-      const hy = Math.round(44 + rand() * (height - 88));
+      const xRange = width * 0.5 - 32;
+      const yRange = height - 88;
+      if (xRange <= 0 || yRange <= 0) break;
+
+      const hx = Math.round(width * 0.42 + rand() * xRange);
+      const hy = Math.round(44 + rand() * yRange);
 
       const hitsWall = obstacles.some((wall) => circleIntersectsRect(hx, hy, r + 10, wall));
       const nearSpawn = Math.hypot(hx - playerSpawn.x, hy - playerSpawn.y) < 120;
@@ -138,24 +160,57 @@ export const GameGenerator = {
       }
     }
 
+    const errors: string[] = [];
+    if (obstacles.length < spec.obstacles.count) {
+      errors.push(
+        `Placement incomplet des obstacles : ${obstacles.length}/${spec.obstacles.count} placés (arène trop dense ou taille d'obstacle excessive).`
+      );
+    }
+    if (collectibles.length < spec.collectibles.count) {
+      errors.push(
+        `Placement incomplet des objets à collecter : ${collectibles.length}/${spec.collectibles.count} placés (espace libre insuffisant).`
+      );
+    }
+    if (hazards.length < spec.hazards.count) {
+      errors.push(
+        `Placement incomplet des dangers mobiles : ${hazards.length}/${spec.hazards.count} placés (zone d'apparition saturée).`
+      );
+    }
+
     return {
       playerSpawn,
       obstacles,
       collectibles,
       hazards,
+      diagnostics: {
+        complete: errors.length === 0,
+        requested: {
+          obstacles: spec.obstacles.count,
+          collectibles: spec.collectibles.count,
+          hazards: spec.hazards.count,
+        },
+        placed: {
+          obstacles: obstacles.length,
+          collectibles: collectibles.length,
+          hazards: hazards.length,
+        },
+        errors,
+      },
     };
   },
 
   buildStandaloneHtml(spec: ReagGameSpec, layout: GeneratedLevelLayout): string {
-    const payload = JSON.stringify({ spec, layout });
+    const safePayload = serializeJsonForHtmlScript({ spec, layout });
     const safeTitle = escapeHtml(spec.title);
+    const safeCollectLabel = escapeHtml(spec.collectibles.label);
+    const safeLives = String(spec.player.initialLives);
 
     return `<!doctype html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${safeTitle} — Export REAG V1</title>
+  <title>${safeTitle} — Export REAG V2</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 16px; }
@@ -164,7 +219,7 @@ export const GameGenerator = {
     canvas { width: 100%; max-width: ${spec.arena.width}px; height: auto; border: 1px solid #334155; border-radius: 8px; background: ${spec.arena.backgroundColor}; display: block; }
     .controls { margin-top: 12px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; justify-content: center; }
     .dpad { display: grid; grid-template-columns: repeat(3, 46px); grid-template-rows: repeat(2, 46px); gap: 6px; }
-    button { cursor: pointer; border: 1px solid #475569; background: #1e293b; color: #f8fafc; border-radius: 8px; font-size: 14px; font-weight: 600; padding: 8px 14px; touch-action: manipulation; }
+    button { cursor: pointer; border: 1px solid #475569; background: #1e293b; color: #f8fafc; border-radius: 8px; font-size: 14px; font-weight: 600; padding: 8px 14px; touch-action: none; }
     button:active, button.primary { background: #2563eb; border-color: #3b82f6; }
   </style>
 </head>
@@ -172,8 +227,8 @@ export const GameGenerator = {
   <div class="hud">
     <span><strong>${safeTitle}</strong></span>
     <span>Score : <strong id="score">0</strong></span>
-    <span>${escapeHtml(spec.collectibles.label)} : <strong id="col">0/${layout.collectibles.length}</strong></span>
-    <span>Vies : <strong id="lives">${spec.player.initialLives}</strong></span>
+    <span>${safeCollectLabel} : <strong id="col">0/${layout.collectibles.length}</strong></span>
+    <span>Vies : <strong id="lives">${safeLives}</strong></span>
     <span id="timer"></span>
     <span id="stateLabel">Prêt</span>
   </div>
@@ -191,20 +246,28 @@ export const GameGenerator = {
     </div>
   </div>
   <script>
-    const DATA = ${payload};
+    const DATA = ${safePayload};
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const keys = { up: false, down: false, left: false, right: false };
     let state = null;
     let lastTs = 0;
 
+    function resetKeys() {
+      keys.up = false;
+      keys.down = false;
+      keys.left = false;
+      keys.right = false;
+    }
+
     function resetState(startPlaying) {
       const { spec, layout } = DATA;
+      resetKeys();
       state = {
         status: startPlaying ? 'PLAYING' : 'PRE_GAME',
         score: 0,
         collected: 0,
-        timeLeft: spec.rules.timeLimitSeconds ? spec.rules.timeLimitSeconds * 1000 : null,
+        timeLeft: spec.rules.timeLimitSeconds !== null ? spec.rules.timeLimitSeconds * 1000 : null,
         player: { x: layout.playerSpawn.x, y: layout.playerSpawn.y, r: spec.player.radius, lives: spec.player.initialLives, invuln: 0 },
         obstacles: layout.obstacles.map(o => ({ ...o })),
         collectibles: layout.collectibles.map(c => ({ ...c, collected: false })),
@@ -220,6 +283,13 @@ export const GameGenerator = {
       return dx * dx + dy * dy < r * r;
     }
 
+    function isVictoryReached(spec, collected, totalCollectibles, score) {
+      if (spec.rules.winCondition === 'target_score') {
+        return score >= spec.rules.targetScore;
+      }
+      return totalCollectibles > 0 && collected >= totalCollectibles;
+    }
+
     function updateHud() {
       document.getElementById('score').textContent = String(state.score);
       document.getElementById('col').textContent = state.collected + '/' + state.collectibles.length;
@@ -229,14 +299,14 @@ export const GameGenerator = {
       document.getElementById('stateLabel').textContent = map[state.status] || state.status;
     }
 
-    function step(dtMs) {
+    function stepSub(dtMs) {
       if (state.status !== 'PLAYING') return;
-      const dt = Math.min(dtMs, 50) / 1000;
+      const dt = dtMs / 1000;
       const spec = DATA.spec;
       if (state.player.invuln > 0) state.player.invuln = Math.max(0, state.player.invuln - dtMs);
       if (state.timeLeft !== null) {
         state.timeLeft = Math.max(0, state.timeLeft - dtMs);
-        if (state.timeLeft <= 0) { state.status = 'DEFEAT'; updateHud(); return; }
+        if (state.timeLeft <= 0) { state.status = 'DEFEAT'; return; }
       }
       let dx = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
       let dy = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
@@ -247,17 +317,23 @@ export const GameGenerator = {
       if (!state.obstacles.some(w => circleRectHit(state.player.x, ny, state.player.r, w))) state.player.y = ny;
 
       for (const c of state.collectibles) {
-        if (!c.collected && Math.hypot(state.player.x - c.x, state.player.y - c.y) < state.player.r + c.radius) {
+        if (!c.collected && Math.hypot(state.player.x - c.x, state.player.y - c.y) <= state.player.r + c.radius) {
           c.collected = true;
           state.collected += 1;
           state.score += c.points;
         }
       }
-      if (state.collected >= state.collectibles.length || (spec.rules.winCondition === 'target_score' && state.score >= spec.rules.targetScore)) {
-        state.status = 'VICTORY'; updateHud(); return;
+      if (isVictoryReached(spec, state.collected, state.collectibles.length, state.score)) {
+        state.status = 'VICTORY'; return;
       }
 
       for (const h of state.hazards) {
+        if (h.behavior === 'chase_slow') {
+          const tx = state.player.x - h.x, ty = state.player.y - h.y;
+          const len = Math.hypot(tx, ty) || 1;
+          h.vx = (tx / len) * (h.speed * 0.72);
+          h.vy = (ty / len) * (h.speed * 0.72);
+        }
         const hx = h.x + h.vx * dt;
         if (hx - h.radius < 0 || hx + h.radius > spec.arena.width || state.obstacles.some(w => circleRectHit(hx, h.y, h.radius, w))) {
           h.vx = -h.vx;
@@ -266,11 +342,22 @@ export const GameGenerator = {
         if (hy - h.radius < 0 || hy + h.radius > spec.arena.height || state.obstacles.some(w => circleRectHit(h.x, hy, h.radius, w))) {
           h.vy = -h.vy;
         } else { h.y = hy; }
-        if (state.player.invuln <= 0 && Math.hypot(state.player.x - h.x, state.player.y - h.y) < state.player.r + h.radius) {
+        if (state.player.invuln <= 0 && Math.hypot(state.player.x - h.x, state.player.y - h.y) <= state.player.r + h.radius) {
           state.player.lives = Math.max(0, state.player.lives - h.damage);
           state.player.invuln = spec.player.invulnerabilityMs;
           if (state.player.lives <= 0) { state.status = 'DEFEAT'; break; }
         }
+      }
+    }
+
+    function step(totalDtMs) {
+      if (state.status !== 'PLAYING') return;
+      let remaining = Math.max(0, Math.min(totalDtMs, 250));
+      const SUBSTEP = 20;
+      while (remaining > 0 && state.status === 'PLAYING') {
+        const chunk = Math.min(SUBSTEP, remaining);
+        stepSub(chunk);
+        remaining -= chunk;
       }
       updateHud();
     }
@@ -303,10 +390,14 @@ export const GameGenerator = {
     const keyMap = { ArrowUp: 'up', KeyW: 'up', KeyZ: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', KeyQ: 'left', ArrowRight: 'right', KeyD: 'right' };
     window.addEventListener('keydown', (e) => { if (keyMap[e.code]) { e.preventDefault(); keys[keyMap[e.code]] = true; } });
     window.addEventListener('keyup', (e) => { if (keyMap[e.code]) { keys[keyMap[e.code]] = false; } });
+    window.addEventListener('blur', resetKeys);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) resetKeys(); });
     document.querySelectorAll('[data-dir]').forEach((btn) => {
       const dir = btn.getAttribute('data-dir');
-      btn.addEventListener('pointerdown', (e) => { e.preventDefault(); keys[dir] = true; });
+      btn.addEventListener('pointerdown', (e) => { e.preventDefault(); if (btn.setPointerCapture) { try { btn.setPointerCapture(e.pointerId); } catch {} } keys[dir] = true; });
       btn.addEventListener('pointerup', () => { keys[dir] = false; });
+      btn.addEventListener('pointercancel', () => { keys[dir] = false; });
+      btn.addEventListener('lostpointercapture', () => { keys[dir] = false; });
       btn.addEventListener('pointerleave', () => { keys[dir] = false; });
     });
     document.getElementById('btnStart').addEventListener('click', () => { if (state.status === 'PRE_GAME') { state.status = 'PLAYING'; updateHud(); } });
@@ -325,6 +416,14 @@ export const GameGenerator = {
     }
 
     const layout = this.generateLevelLayout(spec);
+    if (!layout.diagnostics.complete) {
+      throw new Error(
+        `Échec de génération du niveau (placement incomplet) : ${layout.diagnostics.errors.join(
+          ' '
+        )}`
+      );
+    }
+
     const standaloneHtml = this.buildStandaloneHtml(spec, layout);
     const checksum = fnv1aHash(JSON.stringify({ spec, layout }));
 

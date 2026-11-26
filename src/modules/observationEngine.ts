@@ -137,16 +137,41 @@ export const ObservationEngine = {
         const parsed = JSON.parse(trimmed);
         const rows = Array.isArray(parsed) ? parsed : [parsed];
         rows.forEach((row, index) => {
-          if (typeof row !== 'object' || row === null) {
+          if (typeof row !== 'object' || row === null || Array.isArray(row)) {
             errors.push(`Entrée JSON #${index + 1} ignorée : objet attendu.`);
             return;
           }
           const r = row as Record<string, unknown>;
-          const title = String(r.title || r.titre || '').trim();
-          const description = String(r.description || r.regle || '').trim();
+          if (
+            Object.prototype.hasOwnProperty.call(r, '__proto__') ||
+            Object.prototype.hasOwnProperty.call(r, 'constructor')
+          ) {
+            errors.push(`Entrée JSON #${index + 1} rejetée : clé interdite détectée.`);
+            return;
+          }
+          const title = typeof r.title === 'string' ? r.title.trim() : typeof r.titre === 'string' ? r.titre.trim() : '';
+          const description =
+            typeof r.description === 'string'
+              ? r.description.trim()
+              : typeof r.regle === 'string'
+              ? r.regle.trim()
+              : '';
           if (!title || !description) {
             errors.push(`Entrée JSON #${index + 1} ignorée : "title" et "description" requis.`);
             return;
+          }
+          const safeParams: Record<string, string | number | boolean> = {};
+          if (r.parameters !== undefined) {
+            if (typeof r.parameters !== 'object' || r.parameters === null || Array.isArray(r.parameters)) {
+              errors.push(`Entrée JSON #${index + 1} ignorée : "parameters" invalide.`);
+              return;
+            }
+            for (const [pk, pv] of Object.entries(r.parameters as Record<string, unknown>)) {
+              if (pk === '__proto__' || pk === 'constructor' || pk === 'prototype') continue;
+              if (typeof pv === 'string' || typeof pv === 'boolean' || (typeof pv === 'number' && Number.isFinite(pv))) {
+                safeParams[pk] = pv;
+              }
+            }
           }
           const catRaw = String(r.category || r.categorie || '').toLowerCase() as ObservationCategory;
           const confRaw = String(
@@ -160,10 +185,7 @@ export const ObservationEngine = {
               title,
               description,
               confidence: VALID_CONFIDENCES.includes(confRaw) ? confRaw : 'deduite',
-              parameters:
-                typeof r.parameters === 'object' && r.parameters !== null
-                  ? (r.parameters as Record<string, string | number | boolean>)
-                  : {},
+              parameters: safeParams,
               importedFrom: originLabel,
             })
           );

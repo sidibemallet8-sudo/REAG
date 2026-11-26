@@ -310,39 +310,59 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
               </div>
             ) : (
               <div className="divide-y divide-slate-200 max-h-[420px] overflow-y-auto">
-                {project.observations.map((obs) => (
-                  <div key={obs.id} className="p-4 flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-900">{obs.title}</p>
-                      <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 flex-wrap">
-                        <span>{CATEGORY_LABELS[obs.category]}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{CONFIDENCE_LABELS[obs.confidence]}</span>
-                        {obs.sourceId && (
-                          <>
-                            <span aria-hidden="true">·</span>
-                            <span className="text-emerald-700">Sourcée</span>
-                          </>
-                        )}
+                {project.observations.map((obs) => {
+                  const hasSourceId = Boolean(obs.sourceId && obs.sourceId.trim().length > 0);
+                  const sourceExists = hasSourceId
+                    ? project.sources.some((s) => s.id === obs.sourceId)
+                    : false;
+                  return (
+                    <div key={obs.id} className="p-4 flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-900">{obs.title}</p>
+                        <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 flex-wrap">
+                          <span>{CATEGORY_LABELS[obs.category]}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{CONFIDENCE_LABELS[obs.confidence]}</span>
+                          {hasSourceId && sourceExists && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-emerald-700">Sourcée</span>
+                            </>
+                          )}
+                          {hasSourceId && !sourceExists && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-rose-700 font-medium">
+                                Source introuvable ({obs.sourceId})
+                              </span>
+                            </>
+                          )}
+                          {!hasSourceId && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-amber-700">Sans source</span>
+                            </>
+                          )}
+                        </div>
+                        <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
+                          {obs.description}
+                        </p>
                       </div>
-                      <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
-                        {obs.description}
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateObservations(
+                            ObservationEngine.removeObservation(project.observations, obs.id)
+                          )
+                        }
+                        aria-label={`Supprimer ${obs.title}`}
+                        className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:text-rose-700 hover:border-rose-200 shrink-0 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onUpdateObservations(
-                          ObservationEngine.removeObservation(project.observations, obs.id)
-                        )
-                      }
-                      aria-label={`Supprimer ${obs.title}`}
-                      className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:text-rose-700 hover:border-rose-200 shrink-0 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -401,8 +421,9 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
                       </h4>
                       <p className="mt-0.5 text-xs text-emerald-800 tabular-nums">
                         {analysis.metrics.totalMechanicCount} mécanique(s) extraite(s) ·{' '}
-                        {analysis.metrics.sourceTraceabilityRatio}% reliée(s) à une source
-                        documentaire
+                        {analysis.metrics.sourcedObservationCount}/{analysis.metrics.observationCount}{' '}
+                        observation(s) sourcée(s) ({analysis.metrics.sourceTraceabilityRatio}%
+                        traçabilité globale)
                       </p>
                     </div>
                   </div>
@@ -425,24 +446,69 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">Observations</p>
+                  <p className="text-xs text-slate-500">Obs. sourcées</p>
                   <p className="mt-1 text-xl font-semibold text-slate-900 tabular-nums">
-                    {analysis.metrics.observationCount}
+                    {analysis.metrics.sourcedObservationCount}/{analysis.metrics.observationCount}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">Mécaniques</p>
+                  <p className="text-xs text-slate-500">Contradictions</p>
                   <p className="mt-1 text-xl font-semibold text-slate-900 tabular-nums">
-                    {analysis.metrics.totalMechanicCount}
+                    {analysis.contradictions.length}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">Traçabilité source</p>
+                  <p className="text-xs text-slate-500">Traçabilité réelle</p>
                   <p className="mt-1 text-xl font-semibold text-slate-900 tabular-nums">
                     {analysis.metrics.sourceTraceabilityRatio}%
                   </p>
                 </div>
               </div>
+
+              {/* Références invalides */}
+              {analysis.invalidSourceReferences.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-rose-900 mb-2">
+                    Références de sources invalides ({analysis.invalidSourceReferences.length})
+                  </h4>
+                  <ul className="space-y-1.5 text-xs text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-4">
+                    {analysis.invalidSourceReferences.map((ref) => (
+                      <li key={ref.observationId}>
+                        • <strong>{ref.observationTitle}</strong> pointe vers la source
+                        inexistante <span className="font-mono">{ref.invalidSourceId}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Contradictions préservées */}
+              {analysis.contradictions.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900 mb-2">
+                    Contradictions détectées et préservées ({analysis.contradictions.length})
+                  </h4>
+                  <div className="border border-amber-200 bg-amber-50 rounded-lg divide-y divide-amber-200">
+                    {analysis.contradictions.map((contra) => (
+                      <div key={contra.id} className="p-4 text-xs text-amber-950 space-y-1.5">
+                        <p className="font-semibold">
+                          Paramètre « {contra.parameterKey} » ({CATEGORY_LABELS[contra.category]})
+                        </p>
+                        <p className="text-amber-800">{contra.resolutionNote}</p>
+                        <ul className="space-y-1 pl-3 border-l border-amber-300">
+                          {contra.values.map((entry) => (
+                            <li key={`${entry.observationId}_${String(entry.value)}`}>
+                              <strong>{entry.observationTitle}</strong> :{' '}
+                              <span className="font-mono">{String(entry.value)}</span> (confiance{' '}
+                              {CONFIDENCE_LABELS[entry.confidence]})
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Mécaniques extraites */}
               {analysis.extractedMechanics.length > 0 && (
@@ -462,7 +528,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
                           >
                             {m.sourced
                               ? `${m.evidenceSourceIds.length} source(s) · ${m.evidenceObservationIds.length} obs.`
-                              : `Non sourcée · ${m.evidenceObservationIds.length} obs.`}
+                              : `Traçabilité incomplète · ${m.evidenceObservationIds.length} obs.`}
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-slate-600 leading-relaxed">
@@ -496,7 +562,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
               {/* Limites assumées */}
               <div>
                 <h4 className="text-sm font-semibold text-slate-900 mb-2">
-                  Limites structurelles du moteur V1
+                  Limites structurelles du moteur V1/V2
                 </h4>
                 <ul className="space-y-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-4">
                   {analysis.v1Limitations.map((lim, i) => (

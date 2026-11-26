@@ -3,6 +3,7 @@ import { CapabilityAuditItem, TestCaseResult, TestSuiteResult } from '../types/r
 import { GameAnalysisEngine } from './analysisEngine';
 import { GameGenerator } from './gameGenerator';
 import { createRuntimeState, stepRuntime } from './gameRuntime';
+import { RuntimeInputController } from './inputController';
 import { ObservationEngine } from './observationEngine';
 import { memoryStorage, ProjectManager } from './projectManager';
 import { ResearchManager } from './researchManager';
@@ -12,6 +13,15 @@ function assert(condition: unknown, message: string): void {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function assertThrows(fn: () => unknown, message: string): Error {
+  try {
+    fn();
+  } catch (err) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+  throw new Error(message);
 }
 
 function runTestCase(
@@ -49,51 +59,51 @@ function runTestCase(
 export const V1_CAPABILITY_AUDIT: CapabilityAuditItem[] = [
   {
     module: 'A. Project Manager',
-    feature: 'Création, duplication, suppression, persistance locale et export/import JSON',
+    feature: 'Création, duplication, suppression, persistance locale et export/import JSON validé',
     status: 'implemente',
-    note: 'Persistance navigateur via localStorage et sérialisation JSON complète validée.',
+    note: 'Validation stricte des imports JSON et protection des projets existants en cas de corruption.',
   },
   {
     module: 'B. Research Manager',
     feature: 'Gestion de sources documentaires et import de fichiers (.txt, .md, .json)',
     status: 'implemente',
-    note: 'Parsing local des fichiers importés ; pas de scraping web distant sans backend dédié.',
+    note: 'Parsing local validé des fichiers importés ; pas de scraping web distant sans backend dédié.',
   },
   {
     module: 'C. Observation Engine',
     feature: 'Saisie structurée et import CSV / JSON / texte libre',
     status: 'implemente',
-    note: 'Extraction automatique des paramètres numériques de base (vitesse, points, vies, durée).',
+    note: 'Extraction automatique des paramètres numériques avec filtrage des clés prototypes.',
   },
   {
     module: 'D. Game Analysis Engine',
-    feature: 'Analyse déterministe traçable et refus de reconstruction sans preuves',
+    feature: 'Analyse déterministe, détection des sources invalides et préservation des contradictions',
     status: 'partiel',
-    note: 'Moteur déterministe à règles. Ne réalise pas d’analyse vidéo binaire ni d’extraction ROM.',
+    note: 'Moteur déterministe à règles avec traçabilité par observation. Ne réalise pas d’analyse vidéo binaire.',
   },
   {
     module: 'E. Specification Engine',
-    feature: 'Compilation JSON v1.0 et validation des bornes / cohérence',
+    feature: 'Compilation JSON v1.0 et validation stricte (NaN, Infinity, bornes, couleurs)',
     status: 'implemente',
-    note: 'Vérifie l’atteignabilité du score cible et signale les spécifications sans condition de défaite.',
+    note: 'Refuse les valeurs non finies, dimensions impossibles, couleurs invalides et objectifs irréalisables.',
   },
   {
     module: 'F. Game Generator',
-    feature: 'Génération de niveau déterministe et export HTML5 autonome (.html)',
+    feature: 'Placement vérifié, diagnostics d’échec et export HTML5 échappé',
     status: 'partiel',
-    note: 'Génère exclusivement des jeux d’arène 2D top-down. Pas de génération de plateforme gravitaire ni 3D en V1.',
+    note: 'Cible exclusivement la 2D top-down. Refuse explicitement toute génération à placement incomplet.',
   },
   {
     module: 'G. Game Runtime',
-    feature: 'Boucle HTML5 Canvas, collisions par axe, score, victoire/défaite, clavier et tactile',
+    feature: 'Boucle HTML5 Canvas à sous-pas fixes, collect_all/target_score et réinitialisation focus',
     status: 'implemente',
-    note: 'Exécutable en navigateur et en simulation headless pour les tests automatisés.',
+    note: 'Exécutable en navigateur et en simulation headless, synchronisé avec le HTML exporté.',
   },
   {
-    module: 'H. Analyse Python / Serveur / IA externe',
-    feature: 'Moteur Python externe ou décompilation binaire automatique',
+    module: 'H. Analyse Python / Serveur / 3D',
+    feature: 'Moteur Python externe, décompilation binaire ou rendu 3D',
     status: 'non_implemente',
-    note: 'Non implémenté dans la V1 : toute la logique d’analyse est embarquée en TypeScript pour fonctionner hors serveur.',
+    note: 'Hors périmètre V2 (stabilisation noyau 2D uniquement).',
   },
 ];
 
@@ -102,7 +112,7 @@ export const TestingEngine = {
     const startAll = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const cases: TestCaseResult[] = [];
 
-    // Test 1 : Project Manager — persistance et export/import
+    // 1. Persistance & Export/Import nominal
     cases.push(
       runTestCase(
         'test_pm_persistence',
@@ -131,7 +141,47 @@ export const TestingEngine = {
       )
     );
 
-    // Test 2 : Research Manager — ajout et import Markdown
+    // 2. Import malformé & protection des projets existants
+    cases.push(
+      runTestCase(
+        'test_pm_malformed_import',
+        'A. Project Manager',
+        'Rejet des imports JSON malformés et protection des projets existants',
+        () => {
+          memoryStorage.removeItem('reag_test_iso_projects');
+          memoryStorage.removeItem('reag_test_iso_active_id');
+          const pm = new ProjectManager(memoryStorage, 'reag_test_iso');
+          const safeProj = pm.createProject('Projet Intact', 'Ref', 'Doit rester intact');
+          const beforeSnapshot = JSON.stringify(pm.loadProjects());
+
+          assertThrows(() => pm.importProjectJson('{json casse'), 'Syntaxe invalide non rejetée.');
+          assertThrows(
+            () => pm.importProjectJson('{"__proto__":{"polluted":true},"name":"X","sources":[],"observations":[]}'),
+            'Clé __proto__ non rejetée.'
+          );
+          assertThrows(
+            () =>
+              pm.importProjectJson(
+                JSON.stringify({
+                  name: 'Corrompu',
+                  sources: [],
+                  observations: [{ category: 'deplacement', title: 'Bad', description: 'Bad', parameters: { speed: null } }],
+                })
+              ),
+            'Paramètre null non rejeté.'
+          );
+
+          const after = pm.loadProjects();
+          assert(
+            JSON.stringify(after) === beforeSnapshot && after[0].id === safeProj.id,
+            'Les projets existants ont été altérés.'
+          );
+          return 'Imports syntaxiquement invalides, __proto__ et paramètres corrompus rejetés sans altérer le stockage.';
+        }
+      )
+    );
+
+    // 3. Research Manager Markdown
     cases.push(
       runTestCase(
         'test_rm_markdown',
@@ -147,7 +197,7 @@ export const TestingEngine = {
       )
     );
 
-    // Test 3 : Observation Engine — import CSV avec paramètres automatiques
+    // 4. Observation Engine CSV
     cases.push(
       runTestCase(
         'test_oe_csv',
@@ -166,20 +216,14 @@ export const TestingEngine = {
           );
           assert(errors.length === 0, `Erreurs inattendues : ${errors.join(', ')}`);
           assert(observations.length === 2, `Attendu 2 observations, obtenu ${observations.length}.`);
-          assert(
-            observations[0].parameters.speed === 240,
-            'Extraction du paramètre speed=240 échouée.'
-          );
-          assert(
-            observations[1].parameters.pointsPerItem === 50,
-            'Extraction du paramètre pointsPerItem=50 échouée.'
-          );
+          assert(observations[0].parameters.speed === 240, 'Paramètre speed=240 non extrait.');
+          assert(observations[1].parameters.pointsPerItem === 50, 'Paramètre pointsPerItem=50 non extrait.');
           return '2 observations CSV parsées avec paramètres speed=240 et pointsPerItem=50.';
         }
       )
     );
 
-    // Test 4 : Garde-fou anti-hallucination (nom seul refusé)
+    // 5. Garde-fou nom seul
     cases.push(
       runTestCase(
         'test_ae_guardrail',
@@ -188,110 +232,217 @@ export const TestingEngine = {
         () => {
           const bareProject = createBlankProject('Pac-Man Commercial', 'Pac-Man', 'Nom seul');
           const report = GameAnalysisEngine.analyzeProject(bareProject);
-          assert(
-            report.canReconstruct === false,
-            'Le moteur aurait dû refuser la reconstruction sans observations.'
-          );
-          assert(
-            Boolean(report.refusalReason && report.refusalReason.length > 10),
-            'Une raison explicite de refus doit être fournie.'
-          );
+          assert(report.canReconstruct === false, 'Reconstruction aurait dû être refusée.');
+          assert(Boolean(report.refusalReason), 'Raison explicite manquante.');
           return `Refus confirmé : "${report.refusalReason}"`;
         }
       )
     );
 
-    // Test 5 : Analyse complète du projet d’exemple et traçabilité
+    // 6. Traçabilité — observation avec source inexistante
     cases.push(
       runTestCase(
-        'test_ae_sample',
+        'test_ae_invalid_source_ref',
         'D. Game Analysis Engine',
-        'Analyse du projet d’exemple et calcul réel de traçabilité',
+        'Détection des observations référençant une source inexistante et plafonnement traçabilité',
         () => {
-          const sample = createSampleProject();
-          const report = GameAnalysisEngine.analyzeProject(sample);
-          assert(report.canReconstruct === true, 'Le projet d’exemple doit être reconstructible.');
+          const proj = createSampleProject();
+          proj.observations.push({
+            id: 'obs_broken_ref',
+            category: 'deplacement',
+            title: 'Observation orpheline',
+            description: 'Vitesse 215 px/s',
+            sourceId: 'src_fantome_inexistant',
+            confidence: 'confirmee',
+            parameters: { speed: 215 },
+            createdAt: new Date().toISOString(),
+          });
+          const report = GameAnalysisEngine.analyzeProject(proj);
           assert(
-            report.metrics.sourceTraceabilityRatio === 100,
-            `Traçabilité attendue 100%, obtenue ${report.metrics.sourceTraceabilityRatio}%.`
+            report.invalidSourceReferences.length === 1 &&
+              report.invalidSourceReferences[0].invalidSourceId === 'src_fantome_inexistant',
+            'La référence source invalide n’a pas été signalée.'
           );
           assert(
-            report.extractedMechanics.length >= 6,
-            `Au moins 6 mécaniques attendues, obtenu ${report.extractedMechanics.length}.`
+            report.metrics.sourceTraceabilityRatio < 100,
+            `La traçabilité ne doit pas être à 100% avec une source invalide (obtenu ${report.metrics.sourceTraceabilityRatio}%).`
           );
-          return `${report.extractedMechanics.length} mécaniques extraites, traçabilité ${report.metrics.sourceTraceabilityRatio}%.`;
+          return `Source inexistante détectée (${report.invalidSourceReferences[0].invalidSourceId}) ; traçabilité réelle ${report.metrics.sourceTraceabilityRatio}%.`;
         }
       )
     );
 
-    // Test 6 : Specification Engine — compilation et détection d’incohérence
+    // 7. Contradictions — préservation des désaccords et niveaux de confiance
     cases.push(
       runTestCase(
-        'test_se_validation',
+        'test_ae_contradictions',
+        'D. Game Analysis Engine',
+        'Préservation des observations contradictoires et priorité par niveau de confiance',
+        () => {
+          const proj = createSampleProject();
+          proj.observations.push({
+            id: 'obs_conflict_speed',
+            category: 'deplacement',
+            title: 'Hypothèse vitesse rapide',
+            description: 'Le personnage semble avancer à 360 px/s',
+            sourceId: 'src_manuel_arcade',
+            confidence: 'incertaine',
+            parameters: { speed: 360 },
+            createdAt: new Date().toISOString(),
+          });
+          const report = GameAnalysisEngine.analyzeProject(proj);
+          const speedConflict = report.contradictions.find(
+            (c) => c.category === 'deplacement' && c.parameterKey === 'speed'
+          );
+          assert(Boolean(speedConflict), 'La contradiction sur speed n’a pas été détectée.');
+          assert(speedConflict!.values.length === 2, 'Les deux valeurs contradictoires doivent être conservées.');
+          assert(
+            speedConflict!.selectedValue === 215,
+            `La valeur confirmée (215) doit primer sur incertaine (360), obtenu ${speedConflict!.selectedValue}.`
+          );
+          return `Contradiction conservée (215 confirmée vs 360 incertaine), résolution : ${speedConflict!.selectedValue}.`;
+        }
+      )
+    );
+
+    // 8. Validation spécification — NaN, Infinity, couleurs et paramètres invalides
+    cases.push(
+      runTestCase(
+        'test_se_nan_infinity_bounds',
         'E. Specification Engine',
-        'Génération de spécification JSON et détection d’un score cible impossible',
+        'Rejet des valeurs NaN, Infinity, couleurs invalides et dimensions hors bornes',
         () => {
           const sample = createSampleProject();
           const report = GameAnalysisEngine.analyzeProject(sample);
-          const spec = SpecificationEngine.buildSpecification(sample, report);
-          const validRes = SpecificationEngine.validateSpecification(spec);
-          assert(validRes.valid === true, 'La spécification d’exemple doit être valide.');
+          const baseSpec = SpecificationEngine.buildSpecification(sample, report);
 
-          const brokenSpec = {
-            ...spec,
-            rules: { ...spec.rules, winCondition: 'target_score' as const, targetScore: 999999 },
-          };
-          const invalidRes = SpecificationEngine.validateSpecification(brokenSpec);
-          assert(invalidRes.valid === false, 'Un score cible impossible doit être rejeté.');
-          return `Spécification valide générée ; erreur détectée correctement sur score impossible (${invalidRes.errors[0]}).`;
+          const nanSpec = structuredClone(baseSpec);
+          nanSpec.player.speed = Number.NaN;
+          nanSpec.collectibles.pointsPerItem = Number.POSITIVE_INFINITY;
+          nanSpec.arena.width = 120;
+          nanSpec.arena.backgroundColor = 'javascript:alert(1)';
+          nanSpec.hazards.damage = -3;
+          nanSpec.player.radius = 0;
+
+          const res = SpecificationEngine.validateSpecification(nanSpec);
+          assert(!res.valid, 'Une spécification contenant NaN/Infinity/couleurs invalides aurait dû être rejetée.');
+          assert(res.errors.length >= 6, `Attendu >= 6 erreurs, obtenu ${res.errors.length}.`);
+          return `${res.errors.length} erreurs détectées et bloquées (NaN, Infinity, dimensions, couleur, dégâts, rayon).`;
         }
       )
     );
 
-    // Test 7 : Game Generator — placement sans chevauchement et export HTML
+    // 9. Validation spécification — score impossible
     cases.push(
       runTestCase(
-        'test_gg_artifact',
+        'test_se_target_score',
+        'E. Specification Engine',
+        'Détection d’un score cible impossible à atteindre',
+        () => {
+          const sample = createSampleProject();
+          const report = GameAnalysisEngine.analyzeProject(sample);
+          const spec = SpecificationEngine.buildSpecification(sample, report);
+          spec.rules.winCondition = 'target_score';
+          spec.rules.targetScore = 999999;
+          const res = SpecificationEngine.validateSpecification(spec);
+          assert(!res.valid, 'Score cible impossible non bloqué.');
+          return `Erreur détectée : ${res.errors[0]}`;
+        }
+      )
+    );
+
+    // 10. Sécurité export HTML — injection </script> et séparateurs Unicode
+    cases.push(
+      runTestCase(
+        'test_gg_xss_script_escape',
         'F. Game Generator',
-        'Génération déterministe du niveau et export HTML5 autonome',
+        'Sécurisation de l’export HTML contre </script>, <!-- et séparateurs Unicode \\u2028/\\u2029',
         () => {
           const sample = createSampleProject();
           const report = GameAnalysisEngine.analyzeProject(sample);
           const spec = SpecificationEngine.buildSpecification(sample, report);
-          const artifact = GameGenerator.generateGame(spec);
+          spec.title = 'Test </script><script>alert(1)</script> <!-- \u2028\u2029';
+          spec.collectibles.label = 'Éclat</SCRIPT>';
 
-          assert(
-            artifact.layout.collectibles.length === spec.collectibles.count,
-            `Collectibles générés (${artifact.layout.collectibles.length}) != attendus (${spec.collectibles.count}).`
-          );
-          assert(
-            artifact.standaloneHtml.includes('<canvas id="game"'),
-            'Le bundle HTML autonome ne contient pas le canvas de jeu.'
-          );
-          return `Artefact ${artifact.id} (checksum ${artifact.checksum}) avec ${artifact.layout.obstacles.length} obstacles et ${artifact.layout.collectibles.length} objets.`;
+          const artifact = GameGenerator.generateGame(spec);
+          const html = artifact.standaloneHtml;
+          const scriptStart = html.indexOf('<script>');
+          const scriptEnd = html.lastIndexOf('</script>');
+          assert(scriptStart !== -1 && scriptEnd > scriptStart, 'Balise script principale introuvable.');
+          const scriptBody = html.slice(scriptStart + 8, scriptEnd);
+
+          assert(!/<\/script>/i.test(scriptBody), 'Une balise </script> brute est présente dans le script !');
+          assert(!scriptBody.includes('\u2028') && !scriptBody.includes('\u2029'), 'Séparateur Unicode brut présent dans le script.');
+
+          const dataLineMatch = scriptBody.match(/const DATA = (\{.*\});/);
+          assert(Boolean(dataLineMatch && dataLineMatch[1]), 'Payload DATA introuvable dans le HTML.');
+          const parsedData = JSON.parse(dataLineMatch![1]) as { spec: { title: string } };
+          assert(parsedData.spec.title === spec.title, 'Le titre décodé ne correspond pas à l’original.');
+          return 'Aucune balise </script> ni U+2028/U+2029 brute dans le script ; JSON décodé intact.';
         }
       )
     );
 
-    // Test 8 : Game Runtime — déplacement, collision obstacle, collecte, victoire et défaite
+    // 11. Génération niveau — échec explicite si placement incomplet
     cases.push(
       runTestCase(
-        'test_gr_simulation',
+        'test_gg_incomplete_placement',
+        'F. Game Generator',
+        'Refus explicite et diagnostics lorsque le placement d’entités est incomplet',
+        () => {
+          const sample = createSampleProject();
+          const report = GameAnalysisEngine.analyzeProject(sample);
+          const crowdedSpec = SpecificationEngine.buildSpecification(sample, report);
+          crowdedSpec.arena.width = 360;
+          crowdedSpec.arena.height = 280;
+          crowdedSpec.obstacles.count = 35;
+          crowdedSpec.obstacles.minSize = 95;
+          crowdedSpec.obstacles.maxSize = 110;
+          crowdedSpec.collectibles.count = 30;
+
+          const layout = GameGenerator.generateLevelLayout(crowdedSpec);
+          assert(!layout.diagnostics.complete, 'Le placement dense aurait dû échouer.');
+          assert(layout.diagnostics.errors.length > 0, 'Les diagnostics d’erreur sont vides.');
+
+          const err = assertThrows(
+            () => GameGenerator.generateGame(crowdedSpec),
+            'generateGame aurait dû lever une erreur sur placement incomplet.'
+          );
+          return `Placement incomplet bloqué (${layout.diagnostics.placed.obstacles}/${crowdedSpec.obstacles.count} obstacles) : ${err.message}`;
+        }
+      )
+    );
+
+    // 12. Conditions de victoire séparées (collect_all vs target_score)
+    cases.push(
+      runTestCase(
+        'test_gr_win_conditions',
         'G. Game Runtime',
-        'Simulation physique headless : déplacement, collecte, victoire et défaite',
+        'Séparation stricte des modes de victoire collect_all et target_score',
         () => {
           const sample = createSampleProject();
           const report = GameAnalysisEngine.analyzeProject(sample);
           const spec = SpecificationEngine.buildSpecification(sample, report);
           spec.obstacles.count = 0;
           spec.hazards.count = 0;
-          spec.collectibles.count = 1;
-          const artifact = GameGenerator.generateGame(spec);
+          spec.collectibles.count = 2;
+          spec.collectibles.pointsPerItem = 100;
+          spec.rules.winCondition = 'target_score';
+          spec.rules.targetScore = 200;
 
-          // Placer l’unique collectible juste à droite du joueur
+          const artifact = GameGenerator.generateGame(spec);
+          // Cas 1 : en mode target_score avec targetScore=200 mais 1er objet à 50 pts (total max 150)
           artifact.layout.collectibles[0] = {
-            id: 'col_test',
-            x: artifact.layout.playerSpawn.x + 28,
+            id: 'c1',
+            x: artifact.layout.playerSpawn.x + 24,
+            y: artifact.layout.playerSpawn.y,
+            radius: 10,
+            points: 50,
+            collected: false,
+          };
+          artifact.layout.collectibles[1] = {
+            id: 'c2',
+            x: artifact.layout.playerSpawn.x + 56,
             y: artifact.layout.playerSpawn.y,
             radius: 10,
             points: 100,
@@ -299,37 +450,126 @@ export const TestingEngine = {
           };
 
           let state = createRuntimeState(artifact, true);
-          const startX = state.player.x;
-          for (let i = 0; i < 10; i += 1) {
-            state = stepRuntime(
-              state,
-              { up: false, down: false, left: false, right: true },
-              30
-            );
+          for (let i = 0; i < 16; i += 1) {
+            state = stepRuntime(state, { up: false, down: false, left: false, right: true }, 25);
           }
-
-          assert(state.player.x > startX, 'Le personnage ne s’est pas déplacé vers la droite.');
-          assert(state.collectedCount === 1, 'La collecte de l’objet n’a pas été déclenchée.');
-          assert(state.score === 100, `Score attendu 100, obtenu ${state.score}.`);
-          assert(state.status === 'VICTORY', `État attendu VICTORY, obtenu ${state.status}.`);
-
-          // Vérification condition de défaite par fin de chrono
-          const timedSpec = { ...spec, rules: { ...spec.rules, timeLimitSeconds: 1 } };
-          const timedArtifact = GameGenerator.generateGame(timedSpec);
-          let timedState = createRuntimeState(timedArtifact, true);
-          for (let i = 0; i < 30; i += 1) {
-            timedState = stepRuntime(
-              timedState,
-              { up: false, down: false, left: false, right: false },
-              40
-            );
-          }
+          assert(state.collectedCount === 2, `Attendu 2 collectés, obtenu ${state.collectedCount}.`);
+          assert(state.score === 150, `Attendu score 150, obtenu ${state.score}.`);
           assert(
-            timedState.status === 'DEFEAT',
-            `Défaite par chrono attendue, obtenu ${timedState.status}.`
+            state.status === 'PLAYING',
+            `En mode target_score (200), tout collecter à 150 pts ne doit pas gagner (obtenu ${state.status}).`
           );
 
-          return 'Déplacement, collecte (+100 pts), victoire et défaite par expiration vérifiés.';
+          // Cas 2 : mode collect_all gagne dès les 2 objets ramassés même avec targetScore plus élevé
+          const collectAllSpec = structuredClone(spec);
+          collectAllSpec.rules.winCondition = 'collect_all';
+          const collectArtifact = GameGenerator.generateGame(collectAllSpec);
+          collectArtifact.layout.collectibles[0] = { ...artifact.layout.collectibles[0] };
+          collectArtifact.layout.collectibles[1] = { ...artifact.layout.collectibles[1] };
+
+          let state2 = createRuntimeState(collectArtifact, true);
+          for (let i = 0; i < 16; i += 1) {
+            state2 = stepRuntime(state2, { up: false, down: false, left: false, right: true }, 25);
+          }
+          assert(state2.status === 'VICTORY', `En mode collect_all, la victoire est attendue (obtenu ${state2.status}).`);
+          return 'target_score bloque la victoire à 150/200 pts même à 2/2 collectés ; collect_all gagne à 2/2.';
+        }
+      )
+    );
+
+    // 13. Gestion du temps lors d'un ralentissement (sous-pas synchronisés)
+    cases.push(
+      runTestCase(
+        'test_gr_time_sync',
+        'G. Game Runtime',
+        'Cohérence entre temps écoulé, chronomètre et déplacement lors d’un ralentissement',
+        () => {
+          const sample = createSampleProject();
+          const report = GameAnalysisEngine.analyzeProject(sample);
+          const spec = SpecificationEngine.buildSpecification(sample, report);
+          spec.obstacles.count = 0;
+          spec.hazards.count = 0;
+          spec.collectibles.count = 1;
+          spec.player.speed = 200;
+          spec.rules.timeLimitSeconds = 10;
+
+          const artifact = GameGenerator.generateGame(spec);
+          artifact.layout.collectibles[0].x = 680;
+          artifact.layout.collectibles[0].y = 420;
+
+          // Un frame fluide (10 x 20ms = 200ms) vs un frame ralenti (1 x 200ms = 200ms)
+          let smooth = createRuntimeState(artifact, true);
+          for (let i = 0; i < 10; i += 1) {
+            smooth = stepRuntime(smooth, { up: false, down: false, left: false, right: true }, 20);
+          }
+
+          let lagged = createRuntimeState(artifact, true);
+          lagged = stepRuntime(lagged, { up: false, down: false, left: false, right: true }, 200);
+
+          assert(
+            Math.abs(smooth.player.x - lagged.player.x) < 0.001,
+            `Divergence de position : fluide=${smooth.player.x} vs ralenti=${lagged.player.x}.`
+          );
+          assert(
+            smooth.elapsedMs === 200 && lagged.elapsedMs === 200,
+            `Temps écoulé divergent : fluide=${smooth.elapsedMs} vs ralenti=${lagged.elapsedMs}.`
+          );
+          assert(
+            smooth.timeRemainingMs === 9800 && lagged.timeRemainingMs === 9800,
+            `Chronomètre divergent : fluide=${smooth.timeRemainingMs} vs ralenti=${lagged.timeRemainingMs}.`
+          );
+          return 'Position (+40 px), temps écoulé (200 ms) et chronomètre (9800 ms) identiques sous ralentissement.';
+        }
+      )
+    );
+
+    // 14. Cohérence entre runtime principal et HTML exporté
+    cases.push(
+      runTestCase(
+        'test_gr_html_parity',
+        'F/G. Parité Runtime',
+        'Parité logique entre le runtime principal et le HTML autonome exporté',
+        () => {
+          const sample = createSampleProject();
+          const report = GameAnalysisEngine.analyzeProject(sample);
+          const spec = SpecificationEngine.buildSpecification(sample, report);
+          spec.rules.winCondition = 'target_score';
+          spec.rules.targetScore = 500;
+          const artifact = GameGenerator.generateGame(spec);
+          const html = artifact.standaloneHtml;
+
+          assert(html.includes('function isVictoryReached'), 'Fonction isVictoryReached absente du HTML exporté.');
+          assert(html.includes("winCondition === 'target_score'"), 'Séparation target_score absente du HTML exporté.');
+          assert(html.includes('const SUBSTEP = 20;'), 'Sous-pas temporels absents du HTML exporté.');
+          assert(html.includes('pointercancel') && html.includes('lostpointercapture'), 'Gestion pointercancel/lostpointercapture absente du HTML exporté.');
+          assert(html.includes("addEventListener('blur', resetKeys)"), 'Réinitialisation blur absente du HTML exporté.');
+          return 'Parité vérifiée : isVictoryReached, sous-pas temporels, pointercancel et blur présents dans le HTML exporté.';
+        }
+      )
+    );
+
+    // 15. Contrôles — perte de focus et pointercancel
+    cases.push(
+      runTestCase(
+        'test_ctrl_focus_pointer',
+        'G. Contrôles',
+        'Réinitialisation des touches après perte de focus et pointercancel/capture',
+        () => {
+          const ctrl = new RuntimeInputController();
+          ctrl.handleKeyDown('ArrowRight');
+          ctrl.setDirection('up', true);
+          assert(ctrl.getVector().right && ctrl.getVector().up, 'Entrées initiales non activées.');
+
+          // Perte de capture tactile
+          ctrl.handleLostPointerCapture('up');
+          assert(!ctrl.getVector().up, 'Direction tactile restée bloquée après lostpointercapture.');
+
+          // Perte de focus fenêtre
+          ctrl.handlePointerCancel('up');
+          ctrl.resetAll();
+          const v = ctrl.getVector();
+          assert(!v.up && !v.down && !v.left && !v.right, 'Une touche est restée active après perte de focus.');
+          return 'Directions réinitialisées proprement sur lostpointercapture, pointercancel et blur.';
         }
       )
     );

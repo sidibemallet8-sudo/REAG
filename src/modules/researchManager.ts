@@ -52,13 +52,41 @@ export const ResearchManager = {
       }
       const list = Array.isArray(parsed) ? parsed : [parsed];
       return list.map((item, idx) => {
-        const obj = item as Partial<DocumentarySource>;
+        if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+          throw new Error(`Source JSON #${idx + 1} invalide dans "${fileName}" : objet attendu.`);
+        }
+        const obj = item as Record<string, unknown>;
+        if (
+          Object.keys(obj).some(
+            (k) => k === '__proto__' || k === 'constructor' || k === 'prototype'
+          )
+        ) {
+          throw new Error(`Source JSON #${idx + 1} rejetée : clé interdite détectée.`);
+        }
+        const title =
+          typeof obj.title === 'string' && obj.title.trim()
+            ? obj.title.trim()
+            : `${fileName} (#${idx + 1})`;
+        const excerpt =
+          typeof obj.excerpt === 'string' && obj.excerpt.trim()
+            ? obj.excerpt.trim()
+            : '';
+        if (!excerpt) {
+          throw new Error(
+            `Source JSON #${idx + 1} ("${title}") invalide : le champ "excerpt" est requis.`
+          );
+        }
         return this.createSource({
-          title: obj.title || `${fileName} (#${idx + 1})`,
-          kind: obj.kind || 'fichier_importe',
-          reliability: obj.reliability || 'partielle',
-          reference: obj.reference || `fichier://${fileName}`,
-          excerpt: obj.excerpt || JSON.stringify(item),
+          title,
+          kind: (typeof obj.kind === 'string' ? obj.kind : 'fichier_importe') as SourceKind,
+          reliability: (typeof obj.reliability === 'string'
+            ? obj.reliability
+            : 'partielle') as SourceReliability,
+          reference:
+            typeof obj.reference === 'string' && obj.reference.trim()
+              ? obj.reference.trim()
+              : `fichier://${fileName}`,
+          excerpt,
         });
       });
     }

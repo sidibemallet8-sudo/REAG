@@ -17,6 +17,7 @@ import {
   renderRuntimeCanvas,
   stepRuntime,
 } from '../modules/gameRuntime';
+import { RuntimeInputController } from '../modules/inputController';
 import { GameRuntimeState, InputVector, ReagProject, ReagSettings } from '../types/reag';
 import { downloadTextFile, slugifyFilename } from '../utils/download';
 
@@ -43,7 +44,7 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
 }) => {
   const artifact = project.generatedArtifact;
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const inputRef = useRef<InputVector>({ up: false, down: false, left: false, right: false });
+  const inputControllerRef = useRef<RuntimeInputController>(new RuntimeInputController());
   const stateRef = useRef<GameRuntimeState | null>(
     artifact ? createRuntimeState(artifact, false) : null
   );
@@ -61,6 +62,7 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
 
   // Réinitialisation propre quand l'artefact change
   useEffect(() => {
+    inputControllerRef.current.resetAll();
     if (!artifact) {
       stateRef.current = null;
       setHudState(null);
@@ -77,6 +79,7 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
       stateRef.current.status === 'VICTORY' ||
       stateRef.current.status === 'DEFEAT'
     ) {
+      inputControllerRef.current.resetAll();
       const restarted = createRuntimeState(artifact, true);
       stateRef.current = restarted;
       setHudState(restarted);
@@ -92,13 +95,13 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
 
   const handleRestart = useCallback(() => {
     if (!artifact) return;
-    inputRef.current = { up: false, down: false, left: false, right: false };
+    inputControllerRef.current.resetAll();
     const restarted = createRuntimeState(artifact, true);
     stateRef.current = restarted;
     setHudState(restarted);
   }, [artifact]);
 
-  // Boucle de jeu HTML5 Canvas 60 FPS
+  // Boucle de jeu HTML5 Canvas 60 FPS avec sous-pas temps synchronisés
   useEffect(() => {
     if (!artifact) return;
     let rafId = 0;
@@ -107,7 +110,7 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
 
     const tick = (ts: number) => {
       if (!lastTs) lastTs = ts;
-      const dt = ts - lastTs;
+      const rawDt = Math.min(ts - lastTs, 250);
       lastTs = ts;
 
       if (stateRef.current) {
@@ -115,12 +118,17 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
         const prevScore = stateRef.current.score;
         const prevLives = stateRef.current.player.lives;
 
-        const nextState = stepRuntime(stateRef.current, inputRef.current, dt, {
-          onCollect: () => playRuntimeTone('collect', soundEnabledRef.current),
-          onDamage: () => playRuntimeTone('damage', soundEnabledRef.current),
-          onVictory: () => playRuntimeTone('victory', soundEnabledRef.current),
-          onDefeat: () => playRuntimeTone('defeat', soundEnabledRef.current),
-        });
+        const nextState = stepRuntime(
+          stateRef.current,
+          inputControllerRef.current.getVector(),
+          rawDt,
+          {
+            onCollect: () => playRuntimeTone('collect', soundEnabledRef.current),
+            onDamage: () => playRuntimeTone('damage', soundEnabledRef.current),
+            onVictory: () => playRuntimeTone('victory', soundEnabledRef.current),
+            onDefeat: () => playRuntimeTone('defeat', soundEnabledRef.current),
+          }
+        );
         stateRef.current = nextState;
 
         const canvas = canvasRef.current;
@@ -129,7 +137,7 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
           renderRuntimeCanvas(ctx, nextState, debugVectorsRef.current);
         }
 
-        hudSyncAcc += dt;
+        hudSyncAcc += rawDt;
         const stateChanged =
           prevStatus !== nextState.status ||
           prevScore !== nextState.score ||
@@ -148,21 +156,9 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
     return () => cancelAnimationFrame(rafId);
   }, [artifact]);
 
-  // Contrôles clavier (ZQSD, WASD, Flèches, Espace)
+  // Contrôles clavier (ZQSD, WASD, Flèches, Espace) + réinitialisation sur perte de focus
   useEffect(() => {
     if (!artifact) return;
-    const keyMap: Record<string, keyof InputVector> = {
-      ArrowUp: 'up',
-      KeyW: 'up',
-      KeyZ: 'up',
-      ArrowDown: 'down',
-      KeyS: 'down',
-      ArrowLeft: 'left',
-      KeyA: 'left',
-      KeyQ: 'left',
-      ArrowRight: 'right',
-      KeyD: 'right',
-    };
 
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -173,30 +169,52 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
         handleStartOrResume();
         return;
       }
-      const dir = keyMap[e.code];
-      if (dir) {
+      if (inputControllerRef.current.handleKeyDown(e.code)) {
         e.preventDefault();
-        inputRef.current[dir] = true;
       }
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      const dir = keyMap[e.code];
-      if (dir) {
-        inputRef.current[dir] = false;
+      inputControllerRef.current.handleKeyUp(e.code);
+    };
+
+    const onBlur = () => {
+      inputControllerRef.current.resetAll();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        inputControllerRef.current.resetAll();
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [artifact, handleStartOrResume]);
 
-  const setTouchDir = (dir: keyof InputVector, pressed: boolean) => {
-    inputRef.current[dir] = pressed;
+  const handleTouchDown = (
+    dir: keyof InputVector,
+    e: React.PointerEvent<HTMLButtonElement>
+  ) => {
+    e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {
+      // Ignore pointer capture restriction
+    }
+    inputControllerRef.current.setDirection(dir, true);
+  };
+
+  const handleTouchRelease = (dir: keyof InputVector) => {
+    inputControllerRef.current.setDirection(dir, false);
   };
 
   if (!artifact || !hudState) {
@@ -384,9 +402,11 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
               <button
                 type="button"
                 aria-label="Monter"
-                onPointerDown={() => setTouchDir('up', true)}
-                onPointerUp={() => setTouchDir('up', false)}
-                onPointerLeave={() => setTouchDir('up', false)}
+                onPointerDown={(e) => handleTouchDown('up', e)}
+                onPointerUp={() => handleTouchRelease('up')}
+                onPointerCancel={() => handleTouchRelease('up')}
+                onLostPointerCapture={() => handleTouchRelease('up')}
+                onPointerLeave={() => handleTouchRelease('up')}
                 className="w-11 h-11 flex items-center justify-center rounded-lg border border-slate-300 bg-slate-100 active:bg-blue-600 active:text-white touch-none cursor-pointer"
               >
                 <ArrowUp className="w-4 h-4" />
@@ -395,9 +415,11 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
               <button
                 type="button"
                 aria-label="Aller à gauche"
-                onPointerDown={() => setTouchDir('left', true)}
-                onPointerUp={() => setTouchDir('left', false)}
-                onPointerLeave={() => setTouchDir('left', false)}
+                onPointerDown={(e) => handleTouchDown('left', e)}
+                onPointerUp={() => handleTouchRelease('left')}
+                onPointerCancel={() => handleTouchRelease('left')}
+                onLostPointerCapture={() => handleTouchRelease('left')}
+                onPointerLeave={() => handleTouchRelease('left')}
                 className="w-11 h-11 flex items-center justify-center rounded-lg border border-slate-300 bg-slate-100 active:bg-blue-600 active:text-white touch-none cursor-pointer"
               >
                 <ArrowLeft className="w-4 h-4" />
@@ -405,9 +427,11 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
               <button
                 type="button"
                 aria-label="Descendre"
-                onPointerDown={() => setTouchDir('down', true)}
-                onPointerUp={() => setTouchDir('down', false)}
-                onPointerLeave={() => setTouchDir('down', false)}
+                onPointerDown={(e) => handleTouchDown('down', e)}
+                onPointerUp={() => handleTouchRelease('down')}
+                onPointerCancel={() => handleTouchRelease('down')}
+                onLostPointerCapture={() => handleTouchRelease('down')}
+                onPointerLeave={() => handleTouchRelease('down')}
                 className="w-11 h-11 flex items-center justify-center rounded-lg border border-slate-300 bg-slate-100 active:bg-blue-600 active:text-white touch-none cursor-pointer"
               >
                 <ArrowDown className="w-4 h-4" />
@@ -415,9 +439,11 @@ export const GamePreviewView: React.FC<GamePreviewViewProps> = ({
               <button
                 type="button"
                 aria-label="Aller à droite"
-                onPointerDown={() => setTouchDir('right', true)}
-                onPointerUp={() => setTouchDir('right', false)}
-                onPointerLeave={() => setTouchDir('right', false)}
+                onPointerDown={(e) => handleTouchDown('right', e)}
+                onPointerUp={() => handleTouchRelease('right')}
+                onPointerCancel={() => handleTouchRelease('right')}
+                onLostPointerCapture={() => handleTouchRelease('right')}
+                onPointerLeave={() => handleTouchRelease('right')}
                 className="w-11 h-11 flex items-center justify-center rounded-lg border border-slate-300 bg-slate-100 active:bg-blue-600 active:text-white touch-none cursor-pointer"
               >
                 <ArrowRight className="w-4 h-4" />

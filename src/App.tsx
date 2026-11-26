@@ -53,7 +53,14 @@ const projectManager = new ProjectManager();
 function hydrateInitialSample(projects: ReagProject[]): ReagProject[] {
   let changed = false;
   const hydrated = projects.map((p) => {
-    if (p.id === 'proj_labyrinthe_eclats' && !p.generatedArtifact && p.observations.length >= 2) {
+    const needsV2Rehydrate =
+      p.id === 'proj_labyrinthe_eclats' &&
+      p.observations.length >= 2 &&
+      (!p.generatedArtifact ||
+        !p.analysis ||
+        !Array.isArray(p.analysis.contradictions) ||
+        !p.generatedArtifact.layout.diagnostics);
+    if (needsV2Rehydrate) {
       changed = true;
       const analysis = GameAnalysisEngine.analyzeProject(p);
       const spec = SpecificationEngine.buildSpecification(p, analysis);
@@ -187,11 +194,19 @@ export default function App() {
 
   const handleGenerateGame = () => {
     if (!activeProject || !activeProject.specification) return;
-    const generatedArtifact = GameGenerator.generateGame(activeProject.specification);
-    commitProjectUpdate({
-      ...activeProject,
-      generatedArtifact,
-    });
+    try {
+      const generatedArtifact = GameGenerator.generateGame(activeProject.specification);
+      commitProjectUpdate({
+        ...activeProject,
+        generatedArtifact,
+      });
+    } catch (err) {
+      commitProjectUpdate({
+        ...activeProject,
+        generatedArtifact: null,
+      });
+      throw err;
+    }
   };
 
   const handleUpdateSettings = (next: ReagSettings) => {

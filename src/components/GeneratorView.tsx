@@ -139,14 +139,16 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
                     <input
                       type="number"
                       min={40}
-                      max={600}
+                      max={700}
                       value={spec.player.speed}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
                         handleFieldChange((d) => {
-                          d.player.speed = Number(e.target.value) || 120;
+                          d.player.speed = v;
                           return d;
-                        })
-                      }
+                        });
+                      }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
                     />
                   </div>
@@ -160,12 +162,14 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
                       min={1}
                       max={20}
                       value={spec.player.initialLives}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
                         handleFieldChange((d) => {
-                          d.player.initialLives = Number(e.target.value) || 1;
+                          d.player.initialLives = Math.trunc(v);
                           return d;
-                        })
-                      }
+                        });
+                      }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
                     />
                   </div>
@@ -177,15 +181,19 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
                     <input
                       type="number"
                       min={1}
-                      max={40}
+                      max={100}
                       value={spec.collectibles.count}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
                         handleFieldChange((d) => {
-                          d.collectibles.count = Number(e.target.value) || 1;
-                          d.rules.targetScore = d.collectibles.count * d.collectibles.pointsPerItem;
+                          d.collectibles.count = Math.trunc(v);
+                          if (d.rules.winCondition === 'collect_all') {
+                            d.rules.targetScore = d.collectibles.count * d.collectibles.pointsPerItem;
+                          }
                           return d;
-                        })
-                      }
+                        });
+                      }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
                     />
                   </div>
@@ -196,17 +204,60 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
                     </label>
                     <input
                       type="number"
-                      min={10}
-                      max={1000}
+                      min={1}
+                      max={10000}
                       step={10}
                       value={spec.collectibles.pointsPerItem}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
+                        handleFieldChange((d) => {
+                          d.collectibles.pointsPerItem = v;
+                          if (d.rules.winCondition === 'collect_all') {
+                            d.rules.targetScore = d.collectibles.count * d.collectibles.pointsPerItem;
+                          }
+                          return d;
+                        });
+                      }}
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700">
+                      Condition de victoire
+                    </label>
+                    <select
+                      value={spec.rules.winCondition}
                       onChange={(e) =>
                         handleFieldChange((d) => {
-                          d.collectibles.pointsPerItem = Number(e.target.value) || 10;
-                          d.rules.targetScore = d.collectibles.count * d.collectibles.pointsPerItem;
+                          d.rules.winCondition = e.target.value as 'collect_all' | 'target_score';
                           return d;
                         })
                       }
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    >
+                      <option value="collect_all">Collecter tous les objets</option>
+                      <option value="target_score">Atteindre le score cible</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700">
+                      Score cible
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={spec.rules.targetScore}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
+                        handleFieldChange((d) => {
+                          d.rules.targetScore = v;
+                          return d;
+                        });
+                      }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
                     />
                   </div>
@@ -218,14 +269,16 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
                     <input
                       type="number"
                       min={0}
-                      max={20}
+                      max={40}
                       value={spec.obstacles.count}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
                         handleFieldChange((d) => {
-                          d.obstacles.count = Number(e.target.value) || 0;
+                          d.obstacles.count = Math.trunc(v);
                           return d;
-                        })
-                      }
+                        });
+                      }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
                     />
                   </div>
@@ -237,14 +290,16 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
                     <input
                       type="number"
                       min={0}
-                      max={14}
+                      max={30}
                       value={spec.hazards.count}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
                         handleFieldChange((d) => {
-                          d.hazards.count = Number(e.target.value) || 0;
+                          d.hazards.count = Math.trunc(v);
                           return d;
-                        })
-                      }
+                        });
+                      }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
                     />
                   </div>
@@ -275,15 +330,16 @@ export const GeneratorView: React.FC<GeneratorViewProps> = ({
                     <input
                       type="number"
                       min={0}
-                      max={600}
+                      max={3600}
                       value={spec.rules.timeLimitSeconds ?? 0}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
                         handleFieldChange((d) => {
-                          const v = Number(e.target.value);
                           d.rules.timeLimitSeconds = v > 0 ? v : null;
                           return d;
-                        })
-                      }
+                        });
+                      }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
                     />
                   </div>

@@ -53,6 +53,29 @@ export interface ExtractedMechanic {
   parameters: Record<string, string | number | boolean>;
 }
 
+export interface InvalidSourceReference {
+  observationId: string;
+  observationTitle: string;
+  invalidSourceId: string;
+}
+
+export interface ContradictoryValueEntry {
+  observationId: string;
+  observationTitle: string;
+  value: string | number | boolean;
+  confidence: ObservationConfidence;
+  sourceId?: string;
+}
+
+export interface MechanicContradiction {
+  id: string;
+  category: ObservationCategory;
+  parameterKey: string;
+  values: ContradictoryValueEntry[];
+  selectedValue: string | number | boolean;
+  resolutionNote: string;
+}
+
 export interface AnalysisReport {
   projectId: string;
   analyzedAt: string;
@@ -60,12 +83,18 @@ export interface AnalysisReport {
   refusalReason?: string;
   detectedArchetype: 'arcade_arene_2d' | 'indetermine';
   extractedMechanics: ExtractedMechanic[];
+  contradictions: MechanicContradiction[];
+  invalidSourceReferences: InvalidSourceReference[];
+  unsourcedObservationIds: string[];
   controlBindings: string[];
   gaps: string[];
   v1Limitations: string[];
   metrics: {
     sourceCount: number;
     observationCount: number;
+    sourcedObservationCount: number;
+    invalidSourceRefCount: number;
+    observationTraceabilityRatio: number;
     sourcedMechanicCount: number;
     totalMechanicCount: number;
     sourceTraceabilityRatio: number;
@@ -163,11 +192,27 @@ export interface HazardEntity {
   behavior: 'patrol_bounce' | 'chase_slow';
 }
 
+export interface LevelGenerationDiagnostics {
+  complete: boolean;
+  requested: {
+    obstacles: number;
+    collectibles: number;
+    hazards: number;
+  };
+  placed: {
+    obstacles: number;
+    collectibles: number;
+    hazards: number;
+  };
+  errors: string[];
+}
+
 export interface GeneratedLevelLayout {
   playerSpawn: { x: number; y: number };
   obstacles: RectObstacle[];
   collectibles: CollectibleEntity[];
   hazards: HazardEntity[];
+  diagnostics: LevelGenerationDiagnostics;
 }
 
 export interface GeneratedGameArtifact {
