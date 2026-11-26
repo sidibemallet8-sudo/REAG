@@ -1,0 +1,6 @@
+{
+  "name": "REAG V1 — Rétro-ingénierie & Reconstruction de Jeux",
+  "description": "Système expérimental de rétro-ingénierie documentaire, formalisation de mécaniques et génération de jeux 2D HTML5 Canvas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
